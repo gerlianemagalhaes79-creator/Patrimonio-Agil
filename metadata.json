@@ -1,0 +1,10 @@
+{
+  "name": "Patrimônio Ágil - Gestão de Bens Móveis & Auditoria",
+  "description": "Sistema mobile de controle patrimonial para gestores e líderes setoriais. Gestão de bens móveis, workflow de transferências com aprovação, auditoria de inventário com QR Code e emissão de Termos de Responsabilidade compatíveis com ASPEC e SGPS.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "entities": {
+    "Asset": {
+      "title": "Asset",
+      "description": "Bem patrimonial tombado do consórcio CPSMS com todas as suas características contábeis e físicas",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tombamento": { "type": "string", "description": "Número do Tombo / Plaqueta" },
+        "origemTombo": { "type": "string", "description": "Origem da Carga (CPSMS, SESA, UFC, etc.)" },
+        "origemRecurso": { "type": "string", "description": "Origem do Recurso" },
+        "formaAquisicao": { "type": "string", "description": "Forma de Aquisição" },
+        "orgao": { "type": "string", "description": "Órgão gestor" },
+        "descricao": { "type": "string", "description": "Nome do Patrimônio / Nome do Item" },
+        "unidadeId": { "type": "string" },
+        "unidadeNome": { "type": "string" },
+        "area": { "type": "string" },
+        "subarea": { "type": "string" },
+        "setorId": { "type": "string" },
+        "setorNome": { "type": "string" },
+        "subsetorNome": { "type": "string" },
+        "responsavelNome": { "type": "string" },
+        "responsavelCargo": { "type": "string" },
+        "responsavelMatricula": { "type": "string" },
+        "categoria": { "type": "string" },
+        "estado": { "type": "string" },
+        "valorAquisicao": { "type": "number" },
+        "valorResidual": { "type": "number" },
+        "valorBrutoContabil": { "type": "number" },
+        "valorLiquidoContabil": { "type": "number" },
+        "depreciacaoAcumulada": { "type": "number" },
+        "dataAquisicao": { "type": "string" },
+        "dataTombamento": { "type": "string" },
+        "notaFiscal": { "type": "string" },
+        "fornecedor": { "type": "string" },
+        "numeroSerie": { "type": "string" },
+        "observacoes": { "type": "string" }
+      },
+      "required": ["id", "tombamento", "descricao", "unidadeId"]
+    },
+    "TransferRequest": {
+      "title": "TransferRequest",
+      "description": "Pedido de remanejamento ou transferência entre setores ou unidades",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "protocolo": { "type": "string" },
+        "assetId": { "type": "string" },
+        "assetTombamento": { "type": "string" },
+        "assetDescricao": { "type": "string" },
+        "status": { "type": "string", "enum": ["pendente", "aprovada", "rejeitada"] },
+        "dataSolicitacao": { "type": "string" },
+        "unidadeOrigem": { "type": "string" },
+        "setorOrigem": { "type": "string" },
+        "unidadeDestino": { "type": "string" },
+        "setorDestino": { "type": "string" },
+        "solicitanteNome": { "type": "string" },
+        "responsavelDestino": { "type": "string" }
+      },
+      "required": ["id", "protocolo", "assetId", "status"]
+    },
+    "ResponsibilityTerm": {
+      "title": "ResponsibilityTerm",
+      "description": "Termo de responsabilidade emitido para custódia dos bens",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "numeroTermo": { "type": "string" },
+        "tipo": { "type": "string" },
+        "titulo": { "type": "string" },
+        "dataEmissao": { "type": "string" },
+        "unidadeDestino": { "type": "string" },
+        "setorDestino": { "type": "string" },
+        "responsavelNome": { "type": "string" }
+      },
+      "required": ["id", "numeroTermo", "tipo"]
+    }
+  },
+  "firestore": {
+    "/assets/{assetId}": {
+      "schema": { "$ref": "#/entities/Asset" },
+      "description": "Coleção de bens patrimoniais do CPSMS"
+    },
+    "/transfers/{transferId}": {
+      "schema": { "$ref": "#/entities/TransferRequest" },
+      "description": "Coleção de solicitações de transferência patrimonial"
+    },
+    "/terms/{termId}": {
+      "schema": { "$ref": "#/entities/ResponsibilityTerm" },
+      "description": "Coleção de termos de responsabilidade"
+    }
+  }
+}

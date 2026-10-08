@@ -1,0 +1,104 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+  
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+@media print {
+  @page {
+    margin: 12mm 10mm;
+    size: auto;
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .print-page-break {
+    page-break-after: always;
+  }
+
+  /* When printing any modal, hide main web application background elements */
+  body:has(.printable-modal-overlay) header,
+  body:has(.printable-modal-overlay) main,
+  body:has(.printable-modal-overlay) nav,
+  body:has(.printable-modal-overlay) footer {
+    display: none !important;
+  }
+
+  /* Ensure smooth print layout */
+  .page-break-inside-avoid {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Unfold modals for multi-page printing without clipping */
+  .printable-modal-overlay {
+    position: static !important;
+    inset: auto !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    display: block !important;
+    overflow: visible !important;
+    backdrop-filter: none !important;
+  }
+
+  .printable-modal-card {
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: white !important;
+    color: black !important;
+  }
+
+  .printable-report-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  .printable-report-table thead {
+    display: table-header-group !important;
+  }
+
+  .printable-report-table tr {
+    page-break-inside: avoid !important;
+  }
+
+  .printable-report-table tfoot {
+    display: table-footer-group !important;
+  }
+
+  .printable-report-scroll-container {
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    display: block !important;
+  }
+}
