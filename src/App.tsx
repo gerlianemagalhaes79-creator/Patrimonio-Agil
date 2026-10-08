@@ -92,6 +92,10 @@ export default function App() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [firebaseStatus, setFirebaseStatus] = useState<'connected' | 'connecting' | 'offline'>('connecting');
 
+  // Performance timer & query stability tracking
+  const [lastQueryDurationMs, setLastQueryDurationMs] = useState<number>(18);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+
   // Load from IndexedDB on startup + Real-time Cloud Firestore synchronization
   useEffect(() => {
     let unsubscribeAssets: (() => void) | undefined;
@@ -99,6 +103,8 @@ export default function App() {
     let unsubscribeTerms: (() => void) | undefined;
 
     async function loadData() {
+      const loadStartTime = performance.now();
+      setIsProcessing(true);
       let localAssets: Asset[] = [];
       try {
         const [loadedAssets, loadedTransfers, loadedTerms] = await Promise.all([
@@ -119,6 +125,9 @@ export default function App() {
         console.error('Error loading from IndexedDB:', err);
       } finally {
         setIsDBLoaded(true);
+        const loadDuration = Math.max(12, Math.round(performance.now() - loadStartTime));
+        setLastQueryDurationMs(loadDuration);
+        setIsProcessing(false);
       }
 
       // Test connection to Google Firebase
@@ -375,6 +384,66 @@ export default function App() {
     }));
   };
 
+  const handleConsolidateRoomOfficial = (sectorName: string, protocolo: string, parecer: string) => {
+    const t0 = performance.now();
+    setIsProcessing(true);
+    const secLower = sectorName.trim().toLowerCase();
+
+    setAssets(prev => {
+      const updated = prev.map(a => {
+        const aEncontrado = (a.auditoria?.setorEncontrado || '').trim().toLowerCase();
+        const aOrig = (a.setorOriginalAspec || a.setorNome || '').trim().toLowerCase();
+        const isMissing = a.auditoria?.statusDivergencia === 'nao_encontrado';
+
+        // Asset was physically found in this room -> consolidate as definitive location
+        if (aEncontrado === secLower && !isMissing) {
+          const consolidated: Asset = {
+            ...a,
+            setorNome: sectorName,
+            setorOriginalAspec: sectorName,
+            statusRegularizacaoAspec: 'oficializado',
+            foraDoAspec: false,
+            auditoria: {
+              ...a.auditoria,
+              conferido: true,
+              statusDivergencia: 'conforme',
+              statusRegularizacaoAspec: 'oficializado',
+              dataOficializacaoAspec: new Date().toISOString(),
+              setorEncontrado: sectorName,
+              observacaoAuditoria: `[CONSOLIDADO DEFINITIVO NO ASPEC] Atualização homologada pela Gestora sob Despacho ASPEC nº ${protocolo} em ${new Date().toLocaleDateString('pt-BR')}. Rascunho temporário excluído e carga unificada.`
+            }
+          };
+          saveAssetToFirestore(consolidated).catch(console.warn);
+          return consolidated;
+        }
+
+        // Asset was originally in this room but confirmed missing -> record official absence in ASPEC
+        if (aOrig === secLower && isMissing) {
+          const missingConsolidated: Asset = {
+            ...a,
+            statusRegularizacaoAspec: 'oficializado',
+            auditoria: {
+              ...a.auditoria,
+              statusRegularizacaoAspec: 'oficializado',
+              dataOficializacaoAspec: new Date().toISOString(),
+              observacaoAuditoria: `[BAIXA/REGULARIZAÇÃO NO ASPEC] Ausência física homologada sob Despacho ASPEC nº ${protocolo} em ${new Date().toLocaleDateString('pt-BR')}. Parecer: ${parecer}`
+            }
+          };
+          saveAssetToFirestore(missingConsolidated).catch(console.warn);
+          return missingConsolidated;
+        }
+
+        return a;
+      });
+
+      return updated;
+    });
+
+    const duration = Math.max(8, Math.round(performance.now() - t0));
+    setLastQueryDurationMs(duration);
+    setIsProcessing(false);
+  };
+
   const handleClearAllData = async () => {
     await clearAllDB();
     setAssets([]);
@@ -501,6 +570,9 @@ export default function App() {
           onOpenMobileMenu={() => setIsMobileSidebarOpen(true)}
           pendingTransfersCount={pendingTransfersCount}
           firebaseStatus={firebaseStatus}
+          lastQueryDurationMs={lastQueryDurationMs}
+          totalAssetsCount={assets.length}
+          isProcessing={isProcessing}
         />
 
         {/* Main Viewport */}
@@ -585,6 +657,8 @@ export default function App() {
             onUpdateAudit={handleUpdateAudit}
             onAddAsset={handleAddNewAsset}
             onUpdateAsset={handleUpdateAsset}
+            onConsolidateRoom={handleConsolidateRoomOfficial}
+            onRecordQueryDuration={(dur) => setLastQueryDurationMs(Math.max(1, Math.round(dur)))}
           />
         )}
 

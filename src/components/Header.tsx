@@ -1,5 +1,6 @@
 import React from 'react';
 import { NavTab } from './BottomNavigation';
+import { PerformanceTimer } from './PerformanceTimer';
 import { 
   Menu,
   LayoutDashboard,
@@ -16,6 +17,9 @@ interface HeaderProps {
   onOpenMobileMenu?: () => void;
   pendingTransfersCount?: number;
   firebaseStatus?: 'connected' | 'connecting' | 'offline';
+  lastQueryDurationMs?: number;
+  totalAssetsCount?: number;
+  isProcessing?: boolean;
 }
 
 const TAB_INFO: Record<NavTab, { title: string; subtitle: string; icon: React.ElementType }> = {
@@ -60,13 +64,16 @@ export const Header: React.FC<HeaderProps> = ({
   activeTab,
   onOpenMobileMenu,
   firebaseStatus = 'connected',
+  lastQueryDurationMs = 24,
+  totalAssetsCount = 0,
+  isProcessing = false,
 }) => {
   const activeInfo = TAB_INFO[activeTab] || TAB_INFO.dashboard;
   const ActiveIcon = activeInfo.icon;
 
   return (
     <header className="no-print sticky top-0 z-30 bg-white border-b border-slate-200 shadow-2xs">
-      <div className="px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
+      <div className="px-3 sm:px-6 h-14 flex items-center justify-between gap-2 sm:gap-4">
         {/* Left: Mobile Menu Toggle + Breadcrumb / Module Title */}
         <div className="flex items-center gap-3 min-w-0">
           {/* Hamburger button on Mobile only */}
@@ -97,17 +104,25 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Right: Clean, Calm Sync Status Indicator (No duplicate buttons, NO blinking!) */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Right: Performance Timer (Stopwatch + Latency) & Sync Status Indicator */}
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          {/* Visible Performance & Processing Timer */}
+          <PerformanceTimer
+            lastQueryDurationMs={lastQueryDurationMs}
+            totalAssetsCount={totalAssetsCount}
+            isProcessing={isProcessing}
+          />
+
+          {/* Cloud Sync Status Indicator */}
           <div 
-            className="flex items-center gap-2 px-3 py-1 rounded-full bg-slate-50 border border-slate-200 text-xs text-slate-700"
+            className="flex items-center gap-2 px-2.5 sm:px-3 py-1 rounded-full bg-slate-50 border border-slate-200 text-xs text-slate-700"
             title="Conexão com a nuvem"
           >
             <span className={`w-2 h-2 rounded-full shrink-0 ${
               firebaseStatus === 'connected' ? 'bg-emerald-500' :
               firebaseStatus === 'connecting' ? 'bg-amber-500' : 'bg-rose-500'
             }`} />
-            <span className="font-medium text-[11px] hidden sm:inline">
+            <span className="font-medium text-[11px] hidden md:inline">
               {firebaseStatus === 'connected' ? 'Sincronizado' :
                firebaseStatus === 'connecting' ? 'Conectando...' : 'Offline'}
             </span>

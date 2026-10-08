@@ -39,6 +39,7 @@ import { InventorySolutionsGuideModal } from './InventorySolutionsGuideModal';
 import { RoomAspecReportModal } from './RoomAspecReportModal';
 import { UnlocatedAssetsReportModal } from './UnlocatedAssetsReportModal';
 import { AspecOfficializationModal } from './AspecOfficializationModal';
+import { RoomComparisonModal } from './RoomComparisonModal';
 
 interface AuditViewProps {
   assets: Asset[];
@@ -66,6 +67,8 @@ interface AuditViewProps {
   onNavigateToAsset?: (assetId: string) => void;
   onAddAsset?: (newAsset: Asset) => void;
   onUpdateAsset?: (asset: Asset) => void;
+  onConsolidateRoom?: (sectorName: string, protocolo: string, parecer: string) => void;
+  onRecordQueryDuration?: (durationMs: number) => void;
 }
 
 export const AuditView: React.FC<AuditViewProps> = ({
@@ -79,6 +82,8 @@ export const AuditView: React.FC<AuditViewProps> = ({
   onNavigateToAsset,
   onAddAsset,
   onUpdateAsset,
+  onConsolidateRoom,
+  onRecordQueryDuration,
 }) => {
   // Tab: Default is 'salas' (Salas & Setores - exactly as requested: no camera / QR code blocking on open!)
   const [activeTab, setActiveTab] = useState<'salas' | 'divergencias' | 'conciliacao' | 'relatorio' | 'scanner'>('salas');
@@ -88,6 +93,31 @@ export const AuditView: React.FC<AuditViewProps> = ({
   const [showRoomAspecModal, setShowRoomAspecModal] = useState<boolean>(false);
   const [showUnlocatedModal, setShowUnlocatedModal] = useState<boolean>(false);
   const [roomNewSemPlaqueta, setRoomNewSemPlaqueta] = useState<boolean>(false);
+
+  // Side-by-side Dual Version Comparison Modal & Room Conference Draft States
+  const [showRoomComparisonModal, setShowRoomComparisonModal] = useState<boolean>(false);
+  const [activeComparingSector, setActiveComparingSector] = useState<any | null>(null);
+  const [roomSaveFeedback, setRoomSaveFeedback] = useState<string | null>(null);
+
+  // Active Drafts per Sector (Persisted in localStorage)
+  const [roomDrafts, setRoomDrafts] = useState<Record<string, { updatedAt: string; count: number }>>(() => {
+    try {
+      const saved = localStorage.getItem('cpsms_room_drafts');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  // Officially Consolidated Rooms (Persisted in localStorage)
+  const [consolidatedRooms, setConsolidatedRooms] = useState<Record<string, { protocolo: string; parecer: string; data: string }>>(() => {
+    try {
+      const saved = localStorage.getItem('cpsms_room_consolidated');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
 
   // Cross-sector foreign tombo check states inside current room
   const [foreignTomboInput, setForeignTomboInput] = useState<string>('');
@@ -357,6 +387,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
       observacaoAuditoria: 'Presença conferida no setor durante vistoria física in loco.',
       responsavelConferencia: currentProfile.nome
     });
+    markRoomAsDraft(activeSector?.nome);
   };
 
   // Quick Action: Mark Missing / Divergence
@@ -369,6 +400,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
       observacaoAuditoria: 'Não visto nesta sala (em apuração nas outras salas). Cadastro original no ASPEC preservado.',
       responsavelConferencia: currentProfile.nome
     });
+    markRoomAsDraft(activeSector?.nome);
   };
 
   // Quick Action: Undo confirmation
@@ -379,6 +411,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
       observacaoAuditoria: '',
       responsavelConferencia: ''
     });
+    markRoomAsDraft(activeSector?.nome);
   };
 
   // Batch Action: Confirm All Pending Assets in this Room
@@ -407,7 +440,170 @@ export const AuditView: React.FC<AuditViewProps> = ({
     });
 
     setBulkFeedback(`Sucesso! Todos os ${pendingList.length} bens pendentes do setor "${activeSector.nome}" foram conferidos.`);
+    markRoomAsDraft(activeSector.nome);
     setTimeout(() => setBulkFeedback(null), 5000);
+  };
+
+  // Mark room as having an active physical conference draft
+  const markRoomAsDraft = (secName?: string) => {
+    if (!secName) return;
+    setRoomDrafts(prev => {
+      const next = {
+        ...prev,
+        [secName]: {
+          updatedAt: new Date().toISOString(),
+          count: (prev[secName]?.count || 0) + 1
+        }
+      };
+      try {
+        localStorage.setItem('cpsms_room_drafts', JSON.stringify(next));
+      } catch (e) {
+        console.warn(e);
+      }
+      return next;
+    });
+  };
+
+  // Salvar Alterações da Sala -> Abre Comparativo Lado a Lado (ASPEC vs Físico)
+  const handleSaveRoomChanges = (targetSector?: any) => {
+    const sect = targetSector || activeSector;
+    if (!sect) return;
+    const t0 = performance.now();
+
+    const secName = sect.nome;
+    const countChecked = activeSectorAssets.filter(a => a.auditoria?.conferido || a.auditoria?.statusDivergencia).length;
+
+    const nextDrafts = {
+      ...roomDrafts,
+      [secName]: {
+        updatedAt: new Date().toISOString(),
+        count: countChecked || 1
+      }
+    };
+    setRoomDrafts(nextDrafts);
+    try {
+      localStorage.setItem('cpsms_room_drafts', JSON.stringify(nextDrafts));
+    } catch (e) {
+      console.warn(e);
+    }
+
+    setActiveComparingSector(sect);
+    setShowRoomComparisonModal(true);
+
+    if (onRecordQueryDuration) {
+      onRecordQueryDuration(performance.now() - t0);
+    }
+  };
+
+  // Comando de Confirmação da Gestora: ASPEC foi atualizado oficialmente!
+  // Consolida dados como definitivos no sistema e exclui a versão temporária em rascunho
+  const handleConsolidateOfficial = (sectorName: string, protocolo: string, parecer: string) => {
+    const t0 = performance.now();
+
+    // 1. Invocar consolidação definitiva no sistema
+    if (onConsolidateRoom) {
+      onConsolidateRoom(sectorName, protocolo, parecer);
+    } else {
+      const secLower = sectorName.trim().toLowerCase();
+      assets.forEach(a => {
+        const aEncontrado = (a.auditoria?.setorEncontrado || '').trim().toLowerCase();
+        const aOrig = (a.setorOriginalAspec || a.setorNome || '').trim().toLowerCase();
+        const isMissing = a.auditoria?.statusDivergencia === 'nao_encontrado';
+
+        if (aEncontrado === secLower && !isMissing) {
+          if (onUpdateAsset) {
+            onUpdateAsset({
+              ...a,
+              setorNome: sectorName,
+              setorOriginalAspec: sectorName,
+              statusRegularizacaoAspec: 'oficializado',
+              foraDoAspec: false,
+              auditoria: {
+                ...a.auditoria,
+                conferido: true,
+                statusDivergencia: 'conforme',
+                statusRegularizacaoAspec: 'oficializado',
+                dataOficializacaoAspec: new Date().toISOString(),
+                setorEncontrado: sectorName,
+                observacaoAuditoria: `[CONSOLIDADO DEFINITIVO NO ASPEC] Atualização homologada pela Gestora sob Despacho ASPEC nº ${protocolo} em ${new Date().toLocaleDateString('pt-BR')}. Rascunho temporário excluído.`
+              }
+            });
+          }
+        } else if (aOrig === secLower && isMissing) {
+          if (onUpdateAsset) {
+            onUpdateAsset({
+              ...a,
+              statusRegularizacaoAspec: 'oficializado',
+              auditoria: {
+                ...a.auditoria,
+                statusRegularizacaoAspec: 'oficializado',
+                dataOficializacaoAspec: new Date().toISOString(),
+                observacaoAuditoria: `[BAIXA/REGULARIZAÇÃO NO ASPEC] Ausência física homologada sob Despacho ASPEC nº ${protocolo} em ${new Date().toLocaleDateString('pt-BR')}. Parecer: ${parecer}`
+              }
+            });
+          }
+        }
+      });
+    }
+
+    // 2. EXCLUIR VERSÃO TEMPORÁRIA EM RASCUNHO
+    setRoomDrafts(prev => {
+      const next = { ...prev };
+      delete next[sectorName];
+      try {
+        localStorage.setItem('cpsms_room_drafts', JSON.stringify(next));
+      } catch (e) {
+        console.warn(e);
+      }
+      return next;
+    });
+
+    // 3. REGISTRAR SALA COMO CONSOLIDADA DEFINITIVAMENTE NO SISTEMA
+    setConsolidatedRooms(prev => {
+      const next = {
+        ...prev,
+        [sectorName]: {
+          protocolo,
+          parecer,
+          data: new Date().toISOString()
+        }
+      };
+      try {
+        localStorage.setItem('cpsms_room_consolidated', JSON.stringify(next));
+      } catch (e) {
+        console.warn(e);
+      }
+      return next;
+    });
+
+    setRoomSaveFeedback(`Sala "${sectorName}" consolidada como definitiva com sucesso! Versão temporária em rascunho excluída após confirmação oficial no ASPEC (Despacho: ${protocolo}).`);
+    setTimeout(() => setRoomSaveFeedback(null), 8000);
+
+    if (onRecordQueryDuration) {
+      onRecordQueryDuration(performance.now() - t0);
+    }
+  };
+
+  // Descartar rascunho temporário
+  const handleDiscardDraft = (sectorName: string) => {
+    setRoomDrafts(prev => {
+      const next = { ...prev };
+      delete next[sectorName];
+      try {
+        localStorage.setItem('cpsms_room_drafts', JSON.stringify(next));
+      } catch (e) {
+        console.warn(e);
+      }
+      return next;
+    });
+    setRoomSaveFeedback(`Rascunho temporário da sala "${sectorName}" descartado. Mantida a carga contábil original do ASPEC.`);
+    setTimeout(() => setRoomSaveFeedback(null), 5000);
+  };
+
+  // Manter como rascunho de conferência
+  const handleSaveDraftOnly = (sectorName: string) => {
+    setRoomSaveFeedback(`Alterações da sala "${sectorName}" salvas no rascunho de conferência. Aguardando comando da gestora para atualização oficial no ASPEC.`);
+    setTimeout(() => setRoomSaveFeedback(null), 5000);
   };
 
   // Live lookup: Automatically pull all asset specifications when entering tombo
@@ -1288,7 +1484,25 @@ export const AuditView: React.FC<AuditViewProps> = ({
                         <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white group-hover:text-emerald-700 dark:group-hover:text-emerald-300 leading-snug">
                           {sector.nome}
                         </span>
-                        <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-500 group-hover:translate-x-0.5 transition-transform shrink-0" />
+                        <div className="flex items-center gap-1 shrink-0">
+                          {roomDrafts[sector.nome] && (
+                            <span 
+                              className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-amber-400 text-amber-950 font-mono shadow-2xs"
+                              title="Sala possui alterações em rascunho de conferência pendentes de homologação oficial no ASPEC"
+                            >
+                              Rascunho
+                            </span>
+                          )}
+                          {consolidatedRooms[sector.nome] && (
+                            <span 
+                              className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-mono border border-emerald-300"
+                              title="Sala consolidada definitivamente no sistema com ASPEC oficializado"
+                            >
+                              ASPEC OK
+                            </span>
+                          )}
+                          <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-500 group-hover:translate-x-0.5 transition-transform" />
+                        </div>
                       </div>
 
                       {sector.responsavel && (
@@ -1364,6 +1578,17 @@ export const AuditView: React.FC<AuditViewProps> = ({
 
                 {/* Top Action Buttons for this Room */}
                 <div className="flex items-center gap-2 flex-wrap">
+                  {/* Salvar Alterações da Sala (Abre Comparativo Lado a Lado: ASPEC vs Físico) */}
+                  <button
+                    type="button"
+                    onClick={() => handleSaveRoomChanges(activeSector)}
+                    className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-black bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-all cursor-pointer min-h-[38px] shadow-sm ring-2 ring-blue-500/30"
+                    title="Salvar alterações físicas da sala em rascunho de conferência e exibir versões comparativas lado a lado: 'Sala de acordo com o ASPEC' e 'Sala atualizada fisicamente'"
+                  >
+                    <Layers className="w-4 h-4 text-white" />
+                    <span>Salvar Alterações (Comparar com ASPEC)</span>
+                  </button>
+
                   {/* Concluir Sala & Gerar Termo ASPEC */}
                   <button
                     type="button"
@@ -1436,6 +1661,69 @@ export const AuditView: React.FC<AuditViewProps> = ({
                   </button>
                 </div>
               </div>
+
+              {/* Feedback banner após salvar / consolidar */}
+              {roomSaveFeedback && (
+                <div className="p-3 bg-emerald-100 dark:bg-emerald-950 text-emerald-900 dark:text-emerald-100 rounded-xl border border-emerald-300 text-xs font-bold flex items-center justify-between gap-2 animate-in fade-in">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{roomSaveFeedback}</span>
+                  </div>
+                  <button onClick={() => setRoomSaveFeedback(null)} className="text-emerald-700 hover:text-emerald-900 font-mono text-xs">✕</button>
+                </div>
+              )}
+
+              {/* Status da Sala: Rascunho de Conferência Ativo vs Consolidado Definitivo */}
+              {activeSector && roomDrafts[activeSector.nome] ? (
+                <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-xl border-2 border-amber-400 dark:border-amber-700 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
+                  <div className="flex items-start sm:items-center gap-2.5">
+                    <div className="p-1.5 bg-amber-400 text-amber-950 rounded-lg font-black text-[10px] uppercase font-mono shrink-0">
+                      Rascunho de Conferência
+                    </div>
+                    <div className="leading-tight text-amber-950 dark:text-amber-200">
+                      <strong>Esta sala possui alterações salvas em rascunho de conferência.</strong>
+                      <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5">
+                        Somente após a gestora dar o comando de confirmação de que o ASPEC foi atualizado oficialmente é que os dados serão consolidados como definitivos no sistema, excluindo este rascunho temporário.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveComparingSector(activeSector);
+                        setShowRoomComparisonModal(true);
+                      }}
+                      className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs cursor-pointer shadow-xs flex items-center gap-1.5"
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>Ver Comparativo Lado a Lado</span>
+                    </button>
+                  </div>
+                </div>
+              ) : activeSector && consolidatedRooms[activeSector.nome] ? (
+                <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl border border-emerald-300 dark:border-emerald-800 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-xs animate-in fade-in">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <div className="text-emerald-950 dark:text-emerald-200 text-xs">
+                      <strong>Sala Consolidada como Definitiva no Sistema</strong> (Despacho ASPEC nº <strong>{consolidatedRooms[activeSector.nome].protocolo}</strong>).
+                      <span className="text-[11px] text-emerald-700 dark:text-emerald-300 ml-1">
+                        Rascunho temporário excluído após homologação oficial da Gestora.
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveComparingSector(activeSector);
+                      setShowRoomComparisonModal(true);
+                    }}
+                    className="px-3 py-1 rounded-lg bg-white dark:bg-slate-800 border border-emerald-300 text-emerald-800 dark:text-emerald-300 font-bold text-xs hover:bg-emerald-100 dark:hover:bg-slate-700 cursor-pointer shrink-0"
+                  >
+                    Ver Comparativo Consolidado
+                  </button>
+                </div>
+              ) : null}
 
               {/* FIELD TOOL: Verify Any Tombo Found in This Room that Wasn't on the Sheet */}
               <div className="p-3 bg-amber-50 dark:bg-amber-950/30 rounded-xl border border-amber-300 dark:border-amber-800 text-xs space-y-2">
@@ -2456,6 +2744,25 @@ export const AuditView: React.FC<AuditViewProps> = ({
         currentProfile={currentProfile}
         onConfirm={handleConfirmOfficialization}
       />
+
+      {/* Modal Comparativo Lado a Lado: Sala de acordo com o ASPEC vs Sala atualizada fisicamente */}
+      {showRoomComparisonModal && (activeComparingSector || activeSector) && (
+        <RoomComparisonModal
+          isOpen={showRoomComparisonModal}
+          onClose={() => {
+            setShowRoomComparisonModal(false);
+            setActiveComparingSector(null);
+          }}
+          sector={activeComparingSector || activeSector}
+          unit={activeUnitInfo}
+          assets={assets}
+          currentProfile={currentProfile}
+          onConsolidateOfficial={handleConsolidateOfficial}
+          onSaveDraftOnly={handleSaveDraftOnly}
+          onDiscardDraft={handleDiscardDraft}
+          hasDraftActive={Boolean(roomDrafts[(activeComparingSector || activeSector)?.nome || ''])}
+        />
+      )}
 
     </div>
   );

@@ -198,3 +198,34 @@ export interface PatrimonyNorm {
   linkOficial?: string;
   obrigatoriedadeTCE: boolean;
 }
+
+export interface RoomDraftAsset {
+  id: string;
+  tombamento: string;
+  tomboOrigemSesa?: string;
+  descricao: string;
+  origemTombo: TomboOrigin;
+  estado: AssetCondition;
+  valor: number;
+  tipoNoRascunho: 'original_conferido' | 'remanejado_provisorio' | 'fora_aspec' | 'nao_encontrado';
+  setorOriginalAspec?: string;
+  unidadeOriginalAspec?: string;
+  numeroSerie?: string;
+  fornecedor?: string;
+  observacao?: string;
+}
+
+export interface RoomConferenceDraft {
+  id: string;
+  roomId: string;
+  roomName: string;
+  unitId: string;
+  unitNome: string;
+  dataCriacao: string;
+  dataUltimaAtualizacao: string;
+  criadoPor: string;
+  bensOriginaisAspec: RoomDraftAsset[];
+  bensAtualizadosFisico: RoomDraftAsset[];
+  status: 'rascunho_pendente' | 'consolidado_oficial';
+  observacaoRascunho?: string;
+}
