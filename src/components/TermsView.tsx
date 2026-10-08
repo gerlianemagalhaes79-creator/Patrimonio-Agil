@@ -68,7 +68,7 @@ export const TermsView: React.FC<TermsViewProps> = ({
       responsavelNome: sector.responsavelNome,
       responsavelCargo: sector.responsavelCargo,
       responsavelMatricula: sector.responsavelMatricula,
-      gestoraNome: 'Maria Gerliane Rocha Magalhães',
+      gestoraNome: currentProfile.nome || 'Gestora de Patrimônio',
       gestoraCargo: 'Gestora de Patrimônio – CPSMS',
       bens: sectorAssets.map(a => ({
         tombamento: a.tombamento,

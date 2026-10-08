@@ -3,6 +3,7 @@ import { Asset, Sector, UnitInfo, UserProfile, AssetCondition, AssetCategory, To
 import { formatBRL, formatDate, exportAssetsToCsv } from '../utils/formatters';
 import { generateBarcodeSvg, generateQrSvg } from '../utils/codeGenerators';
 import { FilteredAssetsReportModal } from './FilteredAssetsReportModal';
+import { AspecOfficializationModal } from './AspecOfficializationModal';
 import { 
   Search, 
   Filter, 
@@ -109,6 +110,40 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
   const [inspectingAsset, setInspectingAsset] = useState<Asset | null>(null);
   const [printingPlaqueAsset, setPrintingPlaqueAsset] = useState<Asset | null>(null);
   const [showPrintReportModal, setShowPrintReportModal] = useState<boolean>(false);
+  const [assetToOfficialize, setAssetToOfficialize] = useState<Asset | null>(null);
+
+  // Officialization Handler: Gestora gives official OK after confirming definitive baixa in ASPEC
+  const handleConfirmOfficialization = (asset: Asset, protocolo: string, parecer: string) => {
+    if (!onUpdateAsset) return;
+    const targetRoom = asset.auditoria?.setorEncontrado || asset.setorNome;
+    const targetUnit = asset.auditoria?.unidadeEncontrada || asset.unidadeNome;
+
+    const updated: Asset = {
+      ...asset,
+      setorNome: targetRoom,
+      subsetorNome: targetRoom,
+      area: targetRoom,
+      subarea: targetRoom,
+      unidadeNome: targetUnit,
+      statusRegularizacaoAspec: 'oficializado',
+      auditoria: {
+        ...asset.auditoria,
+        conferido: true,
+        statusDivergencia: 'setor_divergente',
+        statusRegularizacaoAspec: 'oficializado',
+        gestoraConfirmouAspec: true,
+        dataOficializacaoAspec: new Date().toISOString(),
+        protocoloOficializacaoAspec: protocolo,
+        responsavelOficializacaoAspec: currentProfile.nome || 'Gestora de Patrimônio',
+        observacaoAuditoria: `Mudança definitiva homologada no ASPEC pela Gestora (${currentProfile.nome || 'Gestora de Patrimônio'}). Dados unificados definitivamente no setor "${targetRoom}". Protocolo: ${protocolo}. ${parecer}`
+      }
+    };
+
+    onUpdateAsset(updated);
+    if (inspectingAsset && inspectingAsset.id === asset.id) {
+      setInspectingAsset(updated);
+    }
+  };
 
   // Editing Asset state
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
@@ -980,6 +1015,25 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
                         Responsável: {asset.responsavelNome}
                       </div>
                     </div>
+
+                    {asset.auditoria?.statusDivergencia === 'setor_divergente' && (
+                      <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-[10.5px] space-y-1">
+                        <div className="flex items-center gap-1 font-bold text-amber-900 dark:text-amber-300">
+                          <span className={`px-1.5 py-0.2 rounded uppercase font-black text-[8.5px] ${
+                            asset.statusRegularizacaoAspec === 'oficializado'
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              : 'bg-amber-200 text-amber-950 border border-amber-400'
+                          }`}>
+                            {asset.statusRegularizacaoAspec === 'oficializado' ? '✓ Oficializado' : '📍 Localização Provisória'}
+                          </span>
+                          <span>{asset.statusRegularizacaoAspec === 'oficializado' ? 'Unificado no ASPEC' : 'Caderno de Balanço'}</span>
+                        </div>
+                        <div className="text-slate-700 dark:text-slate-300 text-[10px] leading-snug">
+                          • Físico na sala: <strong>{asset.auditoria?.setorEncontrado || asset.setorNome}</strong><br/>
+                          • Cadastro no ASPEC: <strong>{asset.setorOriginalAspec || asset.setorNome}</strong>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
@@ -1543,6 +1597,59 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
                   Origem Carga: {inspectingAsset.origemTombo} · Categoria: {inspectingAsset.categoria} · Série: {inspectingAsset.numeroSerie || 'Sem número'}
                 </div>
               </div>
+
+              {inspectingAsset.auditoria?.statusDivergencia === 'setor_divergente' && (
+                <div className="p-3.5 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 text-amber-950 dark:text-amber-200 text-xs space-y-2">
+                  <div className="flex items-center justify-between font-bold flex-wrap gap-2">
+                    <span className="flex items-center gap-1.5 text-amber-900 dark:text-amber-300">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      {inspectingAsset.statusRegularizacaoAspec === 'oficializado'
+                        ? 'Registro Definitivo Oficializado no ASPEC'
+                        : 'Observação de Localização Provisória no Caderno de Balanço'}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-black ${
+                      inspectingAsset.statusRegularizacaoAspec === 'oficializado'
+                        ? 'bg-emerald-200 text-emerald-950'
+                        : 'bg-amber-200 text-amber-950'
+                    }`}>
+                      {inspectingAsset.statusRegularizacaoAspec === 'oficializado' ? '✓ Unificado' : 'Provisório'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] pt-1">
+                    <div className="p-2 rounded bg-white/70 dark:bg-slate-900/60 border border-amber-200 dark:border-amber-800">
+                      <span className="text-[10px] text-amber-800 dark:text-amber-400 font-bold block uppercase">Registro Original no ASPEC:</span>
+                      <strong className="text-slate-900 dark:text-white">{inspectingAsset.setorOriginalAspec || inspectingAsset.setorNome}</strong>
+                      <div className="text-[10px] text-slate-500">{inspectingAsset.unidadeOriginalAspec || inspectingAsset.unidadeNome}</div>
+                    </div>
+                    <div className="p-2 rounded bg-white/70 dark:bg-slate-900/60 border border-amber-200 dark:border-amber-800">
+                      <span className="text-[10px] text-emerald-800 dark:text-emerald-400 font-bold block uppercase">Localização Física Conferida:</span>
+                      <strong className="text-slate-900 dark:text-white">{inspectingAsset.auditoria?.setorEncontrado || inspectingAsset.setorNome}</strong>
+                      <div className="text-[10px] text-slate-500">{inspectingAsset.auditoria?.unidadeEncontrada || inspectingAsset.unidadeNome}</div>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
+                    {inspectingAsset.statusRegularizacaoAspec === 'oficializado'
+                      ? `✓ Baixa contábil confirmada pela Gestora. Registros físicos e contábeis unificados com sucesso no setor "${inspectingAsset.setorNome}".`
+                      : `* Consta no caderno de balanço com observação de localização provisória. O registro definitivo na sala conferida só é oficializado após a Gestora confirmar a baixa/mudança definitiva no sistema ASPEC (OK Oficial).`}
+                  </p>
+                  {inspectingAsset.statusRegularizacaoAspec !== 'oficializado' && (
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const ast = inspectingAsset;
+                          setInspectingAsset(null);
+                          setAssetToOfficialize(ast);
+                        }}
+                        className="w-full sm:w-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-lg text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-sm transition-colors"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Confirmar Baixa Definitiva no ASPEC (OK Oficial da Gestora)</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-end gap-2.5">
                 <button
@@ -2140,6 +2247,14 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
           sectors={sectors}
         />
       )}
+      {/* Modal de Homologação / OK Oficial da Gestora no ASPEC */}
+      <AspecOfficializationModal
+        isOpen={!!assetToOfficialize}
+        onClose={() => setAssetToOfficialize(null)}
+        asset={assetToOfficialize}
+        currentProfile={currentProfile}
+        onConfirm={handleConfirmOfficialization}
+      />
     </div>
   );
 };

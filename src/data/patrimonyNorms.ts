@@ -90,7 +90,7 @@ export const PATRIMONY_NORMS: PatrimonyNorm[] = [
     orgaoEmissor: 'Consórcio Público de Saúde da Microrregião de Sobral (CPSMS)',
     resumo: 'Institui as normas e rotinas internas de controle patrimonial para a Policlínica Bernardo Félix da Silva, Centro de Especialidades Odontológicas (CEO) e Sede Administrativa.',
     pontosChave: [
-      'Criação oficial da Gerência de Patrimônio do CPSMS sob gestão técnica de Maria Gerliane Rocha Magalhães.',
+      'Criação oficial da Gerência de Patrimônio do CPSMS sob gestão técnica da Gestoria de Patrimônio.',
       'Proibição absoluta de transferência ou remanejamento físico de qualquer bem móvel entre salas ou setores sem prévio pedido no sistema e homologação da Gestora.',
       'Fixação de plaqueta patrimonial indelével com código e especificação da entidade titular (CPSMS, SESA ou UFC).',
       'Obrigatoriedade de assinatura bimestral ou a cada mudança de chefia dos Termos de Cautela e Responsabilidade Setorial.'

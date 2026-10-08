@@ -16,7 +16,8 @@ import {
 import { 
   CPSMS_SECTORS, 
   CPSMS_UNITS,
-  AVAILABLE_PROFILES 
+  AVAILABLE_PROFILES,
+  INITIAL_ASSETS
 } from './data/initialData';
 import { 
   saveAssetsToDB, 
@@ -69,7 +70,7 @@ export default function App() {
         const match = AVAILABLE_PROFILES.find(p => p.id === parsed.id);
         if (match) return match;
       }
-      return AVAILABLE_PROFILES[0]; // Gerliane Magalhães
+      return AVAILABLE_PROFILES[0]; // Perfil Gestora
     } catch {
       return AVAILABLE_PROFILES[0];
     }
@@ -105,8 +106,13 @@ export default function App() {
           loadTransfersFromDB(),
           loadTermsFromDB()
         ]);
-        localAssets = loadedAssets;
-        setAssets(loadedAssets);
+        let effectiveAssets = loadedAssets;
+        if ((!effectiveAssets || effectiveAssets.length === 0) && INITIAL_ASSETS.length > 0) {
+          effectiveAssets = INITIAL_ASSETS;
+          saveAssetsToDB(INITIAL_ASSETS).catch(console.warn);
+        }
+        localAssets = effectiveAssets;
+        setAssets(effectiveAssets);
         setTransfers(loadedTransfers);
         setTerms(loadedTerms);
       } catch (err) {
@@ -244,7 +250,7 @@ export default function App() {
         responsavelNome: tr.responsavelDestino,
         responsavelCargo: 'Responsável Designado',
         responsavelMatricula: tr.matriculaResponsavelDestino,
-        gestoraNome: 'Maria Gerliane Rocha Magalhães',
+        gestoraNome: currentProfile.nome || 'Gestora de Patrimônio',
         gestoraCargo: 'Gestora de Patrimônio – CPSMS',
         bens: [
           {
@@ -303,17 +309,19 @@ export default function App() {
       protocolo: protocolNumber,
       status: 'pendente',
       dataSolicitacao: new Date().toISOString().slice(0, 16).replace('T', ' '),
-      gestoraNome: 'Maria Gerliane Rocha Magalhães',
+      gestoraNome: currentProfile.nome || 'Gestora de Patrimônio',
     };
     setTransfers(prev => [newRequest, ...prev]);
     saveTransferToFirestore(newRequest).catch(e => console.warn('Firestore transfer err:', e));
     setActiveTab('transfers');
   };
 
-  const handleAddNewAsset = (newAsset: Asset) => {
+  const handleAddNewAsset = (newAsset: Asset, navigateToAssetsTab = false) => {
     setAssets(prev => [newAsset, ...prev]);
     saveAssetToFirestore(newAsset).catch(e => console.warn('Firestore asset err:', e));
-    setActiveTab('assets');
+    if (navigateToAssetsTab) {
+      setActiveTab('assets');
+    }
   };
 
   const handleUpdateAsset = (updatedAsset: Asset) => {
@@ -330,6 +338,9 @@ export default function App() {
       unidadeEncontrada?: string;
       setorEncontrado?: string;
       subsetorEncontrado?: string;
+      setorOriginalAspec?: string;
+      unidadeOriginalAspec?: string;
+      divergenciaConfirmada?: boolean;
       observacaoAuditoria: string;
       responsavelConferencia: string;
     }
@@ -338,6 +349,10 @@ export default function App() {
       if (a.id === assetId) {
         const audited: Asset = {
           ...a,
+          setorOriginalAspec: data.setorOriginalAspec || a.setorOriginalAspec || a.setorNome,
+          unidadeOriginalAspec: data.unidadeOriginalAspec || a.unidadeOriginalAspec || a.unidadeNome,
+          setorNome: data.statusDivergencia === 'setor_divergente' && data.setorEncontrado ? data.setorEncontrado : a.setorNome,
+          subsetorNome: data.statusDivergencia === 'setor_divergente' && data.subsetorEncontrado ? data.subsetorEncontrado : a.subsetorNome,
           estado: data.novoEstado || a.estado,
           auditoria: {
             conferido: data.conferido,
@@ -347,6 +362,9 @@ export default function App() {
             unidadeEncontrada: data.unidadeEncontrada,
             setorEncontrado: data.setorEncontrado,
             subsetorEncontrado: data.subsetorEncontrado,
+            setorOriginalAspec: data.setorOriginalAspec || a.setorOriginalAspec || a.setorNome,
+            unidadeOriginalAspec: data.unidadeOriginalAspec || a.unidadeOriginalAspec || a.unidadeNome,
+            divergenciaConfirmada: data.divergenciaConfirmada,
             observacaoAuditoria: data.observacaoAuditoria,
           }
         };

@@ -100,8 +100,8 @@ Nestes termos, pede-se deferimento e juntada, aguardando-se os despachos da Dire
 Sobral - CE, ${currentDateFormatted}.
 
 __________________________________________________
-MARIA GERLIANE ROCHA MAGALHÃES
-Gestora de Patrimônio - CPSMS
+GESTORA DE PATRIMÔNIO - CPSMS
+Presidente da Comissão Especial de Inventário
 
 __________________________________________________
 DIRETORIA EXECUTIVA DO CPSMS
@@ -266,8 +266,8 @@ CONTADORA GERAL DO CPSMS (ASPEC)
     <div class="sig-grid">
       <div>
         <div class="sig-line"></div>
-        <strong>MARIA GERLIANE ROCHA MAGALHÃES</strong><br />
-        Gestora de Patrimônio<br />
+        <strong>GESTORA DE PATRIMÔNIO</strong><br />
+        Presidente da Comissão Especial de Inventário<br />
         CPSMS
       </div>
       <div>

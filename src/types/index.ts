@@ -29,6 +29,14 @@ export interface AuditRecord {
   unidadeEncontrada?: string;
   setorEncontrado?: string;
   subsetorEncontrado?: string;
+  setorOriginalAspec?: string; // Localização oficial cadastrada no ASPEC
+  unidadeOriginalAspec?: string; // Unidade gestora original no ASPEC
+  divergenciaConfirmada?: boolean; // Se a alteração de setor foi confirmada pelo usuário
+  statusRegularizacaoAspec?: 'provisorio' | 'oficializado'; // 'provisorio': no caderno com observação provisória; 'oficializado': após OK oficial da gestora no ASPEC
+  gestoraConfirmouAspec?: boolean; // OK oficial da gestora confirmando baixa/mudança no sistema ASPEC
+  dataOficializacaoAspec?: string;
+  protocoloOficializacaoAspec?: string;
+  responsavelOficializacaoAspec?: string;
 }
 
 export interface Asset {
@@ -73,6 +81,9 @@ export interface Asset {
   outrosTombos?: string; // Outros tombos adicionais / tombamentos múltiplos (livre)
   foraDoAspec?: boolean; // Bem físico encontrado na conferência que NÃO estava cadastrado no ASPEC
   semPlaqueta?: boolean; // Bem físico encontrado sem plaqueta de tombamento (para novo emplacamento)
+  setorOriginalAspec?: string; // Setor original cadastrado no ASPEC antes da divergência
+  unidadeOriginalAspec?: string; // Unidade original no ASPEC
+  statusRegularizacaoAspec?: 'provisorio' | 'oficializado';
   codigoSGPS?: string;
   codigoASPEC?: string;
   auditoria: AuditRecord;

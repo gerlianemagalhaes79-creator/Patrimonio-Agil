@@ -94,7 +94,7 @@ export const TransfersView: React.FC<TransfersViewProps> = ({
               {isGestora ? (
                 <>Como Gestora do Patrimônio do CPSMS, você delibera sobre solicitações da <strong>Policlínica Bernardo Félix</strong> e do <strong>CEO de Sobral</strong>. <strong className="text-emerald-300">Somente após a sua aprovação formal</strong> a carga é transferida no sistema e o Termo de Cautela é emitido.</>
               ) : (
-                <>Como Líder Setorial, solicite a transferência de equipamentos ou mobiliários indicando a sala de destino. A carga patrimonial permanece sob sua guarda até que <strong>Maria Gerliane Rocha Magalhães</strong> homologue o pedido.</>
+                <>Como Líder Setorial, solicite a transferência de equipamentos ou mobiliários indicando a sala de destino. A carga patrimonial permanece sob sua guarda até que a <strong>Gestora de Patrimônio</strong> homologue o pedido.</>
               )}
             </p>
           </div>
@@ -360,7 +360,7 @@ export const TransfersView: React.FC<TransfersViewProps> = ({
                     ) : (
                       <div className="w-full text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 p-2.5 rounded-lg border border-amber-200 dark:border-amber-900/40 flex items-center gap-2">
                         <Clock className="w-4 h-4 shrink-0" />
-                        <span>Aguardando análise e parecer da Gestora Maria Gerliane Rocha Magalhães para emissão do Termo de Cautela e atualização no inventário do CPSMS.</span>
+                        <span>Aguardando análise e parecer da Gestora de Patrimônio para emissão do Termo de Cautela e atualização no inventário do CPSMS.</span>
                       </div>
                     )}
                   </div>

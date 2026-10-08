@@ -118,7 +118,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </h2>
         <p className="text-xs sm:text-sm text-slate-600 mt-1 max-w-3xl leading-relaxed">
           {isLeader ? (
-            <>Painel de controle setorial da <strong>{currentProfile.unidadeNome}</strong>. Visualize a carga patrimonial e submeta solicitações formais de movimentação e conferência para deliberação da Gestora Maria Gerliane Rocha Magalhães.</>
+            <>Painel de controle setorial da <strong>{currentProfile.unidadeNome}</strong>. Visualize a carga patrimonial e submeta solicitações formais de movimentação e conferência para deliberação da Gestora de Patrimônio.</>
           ) : (
             <>Estruturação oficial da Gerência de Patrimônio do <strong>CPSMS</strong>. Controle unificado de ativos da <strong>Policlínica Bernardo Félix da Silva</strong>, <strong>CEO Sobral</strong> e Sede Administrativa, com segregação de bens CPSMS, SESA e UFC.</>
           )}
@@ -232,7 +232,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </button>
       </div>
 
-      {/* Initial Empty State Onboarding Card (if Gerliane hasn't added assets yet) */}
+      {/* Initial Empty State Onboarding Card (if assets not added yet) */}
       {totalAssetsCount === 0 && (
         <div className="bg-white dark:bg-slate-900 rounded-2xl border-2 border-emerald-500/40 p-6 sm:p-8 text-center space-y-5 shadow-sm">
           <div className="w-16 h-16 rounded-2xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto border border-emerald-500/30">
@@ -295,7 +295,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
                 {currentProfile.role === 'gestora'
                   ? 'Líderes de unidades do CPSMS solicitaram remanejamento patrimonial que requer despacho privativo.'
-                  : 'Aguarde a validação da Gestora Maria Gerliane Rocha Magalhães para emissão do Termo de Cautela e efetivação da carga.'}
+                  : 'Aguarde a validação da Gestora de Patrimônio para emissão do Termo de Cautela e efetivação da carga.'}
               </p>
             </div>
           </div>

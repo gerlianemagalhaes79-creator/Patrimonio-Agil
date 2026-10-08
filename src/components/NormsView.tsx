@@ -62,7 +62,7 @@ export const NormsView: React.FC = () => {
         </div>
       </div>
 
-      {/* Audit Checklist for Gerliane (TCE-CE Requirements) */}
+      {/* Audit Checklist (TCE-CE Requirements) */}
       <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 sm:p-5 space-y-3">
         <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 font-bold text-sm">
           <Scale className="w-5 h-5 shrink-0" />

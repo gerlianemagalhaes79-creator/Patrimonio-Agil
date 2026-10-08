@@ -271,7 +271,7 @@ export const SaneamentoView: React.FC<SaneamentoViewProps> = ({
                 Plano de Ação e Saneamento Patrimonial · CPSMS
               </h1>
               <p className="text-xs sm:text-sm text-slate-300 max-w-3xl mt-1 leading-relaxed">
-                Centro de comando da <strong>Gestora de Patrimônio (Maria Gerliane Rocha Magalhães)</strong> para regularização de descompassos com o <strong>ASPEC</strong>, segregação dos bens da <strong>SESA e UFC</strong>, controle de extravios com B.O., triagem de inservíveis e preparação da auditoria.
+                Centro de comando da <strong>Gestão de Patrimônio</strong> para regularização de descompassos com o <strong>ASPEC</strong>, segregação dos bens da <strong>SESA e UFC</strong>, controle de extravios com B.O., triagem de inservíveis e preparação da auditoria.
               </p>
             </div>
 
@@ -1457,7 +1457,7 @@ export const SaneamentoView: React.FC<SaneamentoViewProps> = ({
                   1. Minuta de Portaria: Comissão Especial de Inventário Patrimonial
                 </h4>
                 <button
-                  onClick={() => handleCopy(`PORTARIA CPSMS Nº 042/2026\n\nINSTITUI A COMISSÃO ESPECIAL DE LEVANTAMENTO, REGULARIZAÇÃO E INVENTÁRIO PATRIMONIAL DO CONSÓRCIO PÚBLICO DE SAÚDE DA MICRORREGIÃO DE SOBRAL (CPSMS) E DÁ OUTRAS PROVIDÊNCIAS.\n\nA Diretoria Executiva do CPSMS, no uso de suas atribuições legais e estatutárias, e considerando a necessidade de consolidação do acervo de bens móveis e equipamentos da Policlínica Regional Bernardo Félix da Silva, do Centro de Especialidades Odontológicas (CEO Sobral), do CER e da Base Administrativa, visando à prestação de contas junto ao Tribunal de Contas do Estado do Ceará (TCE-CE);\n\nRESOLVE:\n\nArt. 1º - Fica instituída a Comissão Especial de Inventário Físico e Financeiro dos Bens Patrimoniais do CPSMS, composta pelos seguintes membros:\nI - Maria Gerliane Rocha Magalhães - Presidente da Comissão / Gestora de Patrimônio;\nII - [Nome do Servidor 2] - Membro;\nIII - [Nome do Servidor 3] - Membro.\n\nArt. 2º - Compete à Comissão realizar a conferência física sala a sala, identificar divergências, lavrar termos de responsabilidade atualizados e emitir laudos de desfazimento de bens inservíveis.\n\nArt. 3º - Esta Portaria entra em vigor na data de sua publicação.\n\nSobral - CE, [Data Atual].\n\n________________________________________\nDIRETORIA EXECUTIVA DO CPSMS`, 'portaria')}
+                  onClick={() => handleCopy(`PORTARIA CPSMS Nº 042/2026\n\nINSTITUI A COMISSÃO ESPECIAL DE LEVANTAMENTO, REGULARIZAÇÃO E INVENTÁRIO PATRIMONIAL DO CONSÓRCIO PÚBLICO DE SAÚDE DA MICRORREGIÃO DE SOBRAL (CPSMS) E DÁ OUTRAS PROVIDÊNCIAS.\n\nA Diretoria Executiva do CPSMS, no uso de suas atribuições legais e estatutárias, e considerando a necessidade de consolidação do acervo de bens móveis e equipamentos da Policlínica Regional Bernardo Félix da Silva, do Centro de Especialidades Odontológicas (CEO Sobral), do CER e da Base Administrativa, visando à prestação de contas junto ao Tribunal de Contas do Estado do Ceará (TCE-CE);\n\nRESOLVE:\n\nArt. 1º - Fica instituída a Comissão Especial de Inventário Físico e Financeiro dos Bens Patrimoniais do CPSMS, composta pelos seguintes membros:\nI - Gestora de Patrimônio - Presidente da Comissão;\nII - [Nome do Servidor 2] - Membro;\nIII - [Nome do Servidor 3] - Membro.\n\nArt. 2º - Compete à Comissão realizar a conferência física sala a sala, identificar divergências, lavrar termos de responsabilidade atualizados e emitir laudos de desfazimento de bens inservíveis.\n\nArt. 3º - Esta Portaria entra em vigor na data de sua publicação.\n\nSobral - CE, [Data Atual].\n\n________________________________________\nDIRETORIA EXECUTIVA DO CPSMS`, 'portaria')}
                   className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-slate-100 rounded-lg border border-slate-300 dark:border-slate-700 cursor-pointer"
                 >
                   {copiedKey === 'portaria' ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
@@ -1474,7 +1474,7 @@ A Diretoria Executiva do CPSMS, no uso de suas atribuições legais e estatutár
 RESOLVE:
 
 Art. 1º - Fica instituída a Comissão Especial de Inventário Físico e Financeiro dos Bens Patrimoniais do CPSMS, composta pelos seguintes membros:
-I - Maria Gerliane Rocha Magalhães - Presidente da Comissão / Gestora de Patrimônio;
+I - Gestora de Patrimônio - Presidente da Comissão;
 II - [Nome do Servidor 2] - Membro;
 III - [Nome do Servidor 3] - Membro.
 
@@ -1497,7 +1497,7 @@ DIRETORIA EXECUTIVA DO CPSMS`}
                   2. Relatório Circunstanciado de Assunção de Função (Marco Zero / Blindagem)
                 </h4>
                 <button
-                  onClick={() => handleCopy(`OFÍCIO / RELATÓRIO CIRCUNSTANCIADO DE ASSUNÇÃO DE FUNÇÃO Nº 01/2026\n\nÀ Presidência e Diretoria Executiva do CPSMS\nAssunto: Diagnóstico Inicial e Marco Zero da Gestão Patrimonial\n\nSenhores Diretores,\n\nNa qualidade de Gestora de Patrimônio recém-designada, venho, pelo presente instrumento, registrar formalmente o diagnóstico preliminar da base patrimonial do CPSMS, consolidado após constatação de um período de aproximadamente 13 anos sem comissão permanente e inventário periódico.\n\n1. Foram identificados descompassos históricos entre o acervo físico e o sistema contábil ASPEC;\n2. Constatou-se a presença de equipamentos cedidos pela SESA e UFC que necessitam de reclassificação para contas de controle, evitando distorções contábeis e retenção indevida de depreciação;\n3. Foram identificados casos de duplo tombamento (plaquetas SESA de 6 dígitos e CPSMS de 4 dígitos) para retificação contábil;\n4. Está em andamento o plano de ação para regularização de cargas de servidores desligados e triagem de inservíveis para a fiscalização do TCE-CE.\n\nNestes termos, pede-se juntada aos autos para os devidos fins de direito e comprovação de marco inicial de gestão.\n\nSobral - CE, [Data].\n\n________________________________________\nMaria Gerliane Rocha Magalhães\nGestora de Patrimônio - CPSMS`, 'marco_zero')}
+                  onClick={() => handleCopy(`OFÍCIO / RELATÓRIO CIRCUNSTANCIADO DE ASSUNÇÃO DE FUNÇÃO Nº 01/2026\n\nÀ Presidência e Diretoria Executiva do CPSMS\nAssunto: Diagnóstico Inicial e Marco Zero da Gestão Patrimonial\n\nSenhores Diretores,\n\nNa qualidade de Gestora de Patrimônio recém-designada, venho, pelo presente instrumento, registrar formalmente o diagnóstico preliminar da base patrimonial do CPSMS, consolidado após constatação de um período de aproximadamente 13 anos sem comissão permanente e inventário periódico.\n\n1. Foram identificados descompassos históricos entre o acervo físico e o sistema contábil ASPEC;\n2. Constatou-se a presença de equipamentos cedidos pela SESA e UFC que necessitam de reclassificação para contas de controle, evitando distorções contábeis e retenção indevida de depreciação;\n3. Foram identificados casos de duplo tombamento (plaquetas SESA de 6 dígitos e CPSMS de 4 dígitos) para retificação contábil;\n4. Está em andamento o plano de ação para regularização de cargas de servidores desligados e triagem de inservíveis para a fiscalização do TCE-CE.\n\nNestes termos, pede-se juntada aos autos para os devidos fins de direito e comprovação de marco inicial de gestão.\n\nSobral - CE, [Data].\n\n________________________________________\nGestora de Patrimônio - CPSMS`, 'marco_zero')}
                   className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-slate-100 rounded-lg border border-slate-300 dark:border-slate-700 cursor-pointer"
                 >
                   {copiedKey === 'marco_zero' ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
@@ -1524,7 +1524,6 @@ Nestes termos, pede-se juntada aos autos para os devidos fins de direito e compr
 Sobral - CE, ${new Date().toLocaleDateString('pt-BR')}.
 
 ________________________________________
-Maria Gerliane Rocha Magalhães
 Gestora de Patrimônio - CPSMS`}
               </pre>
             </div>

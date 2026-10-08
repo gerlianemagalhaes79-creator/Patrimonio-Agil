@@ -125,7 +125,7 @@ export const NewAssetModal: React.FC<NewAssetModalProps> = ({
       auditoria: {
         conferido: true,
         dataConferencia: new Date().toISOString().slice(0, 10),
-        responsavelConferencia: 'Maria Gerliane Rocha Magalhães',
+        responsavelConferencia: 'Gestora de Patrimônio',
         statusDivergencia: 'conforme',
         observacaoAuditoria: 'Tombamento registrado na implantação da Gerência de Patrimônio do CPSMS.'
       }

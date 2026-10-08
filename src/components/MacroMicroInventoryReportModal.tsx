@@ -29,6 +29,7 @@ import {
   Info,
   Clock
 } from 'lucide-react';
+import { AspecOfficializationModal } from './AspecOfficializationModal';
 
 interface MacroMicroInventoryReportModalProps {
   isOpen: boolean;
@@ -97,6 +98,15 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
   const [editOutrosTombos, setEditOutrosTombos] = useState<string>('');
   const [editOrigemTombo, setEditOrigemTombo] = useState<TomboOrigin>('CPSMS (Próprio do Consórcio)');
 
+  // Live lookup & Confirmação de Divergência de Setor no Caderno de Balanço
+  const [matchedUntrackedExistingAsset, setMatchedUntrackedExistingAsset] = useState<Asset | null>(null);
+  const [pendingMacroDivergenceConfirm, setPendingMacroDivergenceConfirm] = useState<{
+    asset: Asset;
+    targetRoom: string;
+    targetUnit: string;
+  } | null>(null);
+  const [assetToOfficialize, setAssetToOfficialize] = useState<Asset | null>(null);
+
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
   const [printStatus, setPrintStatus] = useState<PrintStatus | null>(null);
   const [isPrinting, setIsPrinting] = useState<boolean>(false);
@@ -151,7 +161,7 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
       let macroName = 'Consórcio CPSMS (Sede Administrativa)';
       let macroSigla = 'Consórcio';
 
-      const uNome = (asset.unidadeNome || '').toLowerCase();
+      const uNome = ((asset.auditoria?.unidadeEncontrada || asset.unidadeNome) || '').toLowerCase();
       const uId = asset.unidadeId || '';
 
       if (uId === 'policlinica' || uNome.includes('poli')) {
@@ -179,8 +189,9 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
 
       const macroObj = macroMap.get(macroKey)!;
 
-      // Determine micro key (room / sector)
-      const roomKey = (asset.subsetorNome || asset.subarea || asset.setorNome || asset.area || 'Setor Geral / Não Especificado').trim();
+      // Determine micro key (room / sector): in physical balance sheet, assets appear in their physical room
+      const physicalRoom = asset.auditoria?.setorEncontrado;
+      const roomKey = (physicalRoom || asset.subsetorNome || asset.subarea || asset.setorNome || asset.area || 'Setor Geral / Não Especificado').trim();
       
       if (!macroObj.rooms.has(roomKey)) {
         macroObj.rooms.set(roomKey, {
@@ -295,13 +306,205 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
     setNewDescricaoInput('');
     setNewSerialInput('');
     setNewValorEstimado('');
+    setMatchedUntrackedExistingAsset(null);
     setShowAddUntrackedModal(true);
+  };
+
+  // Live lookup: Automatically pull all asset specifications when entering tombo in MacroMicro
+  const handleMacroTomboLookup = (tVal: string, cVal: string, sVal: string, uVal: string, fVal: string, oVal?: string) => {
+    const cleanT = tVal.trim().toLowerCase();
+    const cleanC = cVal.trim().toLowerCase();
+    const cleanS = sVal.trim().toLowerCase();
+    const cleanU = uVal.trim().toLowerCase();
+    const cleanF = fVal.trim().toLowerCase();
+    const cleanO = (oVal || '').trim().toLowerCase();
+
+    if (!cleanT && !cleanC && !cleanS && !cleanU && !cleanF && !cleanO) {
+      setMatchedUntrackedExistingAsset(null);
+      return;
+    }
+
+    const digitsT = cleanT.replace(/\D/g, '');
+    const digitsC = cleanC.replace(/\D/g, '');
+    const digitsS = cleanS.replace(/\D/g, '');
+
+    const match = assets.find(a => {
+      const at = a.tombamento.toLowerCase();
+      const ac = (a.tomboConsorcio || '').toLowerCase();
+      const as = (a.tomboSesa || a.tomboOrigemSesa || '').toLowerCase();
+      const au = (a.tomboUfc || '').toLowerCase();
+      const af = (a.tomboFcpc || '').toLowerCase();
+      const ao = (a.outrosTombos || a.tomboSecundario || '').toLowerCase();
+
+      // Direct string matches
+      const matchT = cleanT && (at === cleanT || ac === cleanT || as === cleanT || au === cleanT || af === cleanT || ao === cleanT);
+      const matchC = cleanC && (ac === cleanC || at === cleanC);
+      const matchS = cleanS && (as === cleanS || at === cleanS);
+      const matchU = cleanU && (au === cleanU || at === cleanU);
+      const matchF = cleanF && (af === cleanF || at === cleanF);
+      const matchO = cleanO && (ao === cleanO || at === cleanO);
+
+      if (matchT || matchC || matchS || matchU || matchF || matchO) return true;
+
+      // Numeric digit matching without leading zeros
+      if (digitsT && digitsT.length >= 2) {
+        const tDig = at.replace(/\D/g, '');
+        const cDig = ac.replace(/\D/g, '');
+        const sDig = as.replace(/\D/g, '');
+        if ((tDig && (tDig === digitsT || parseInt(tDig, 10) === parseInt(digitsT, 10))) ||
+            (cDig && (cDig === digitsT || parseInt(cDig, 10) === parseInt(digitsT, 10))) ||
+            (sDig && (sDig === digitsT || parseInt(sDig, 10) === parseInt(digitsT, 10)))) {
+          return true;
+        }
+      }
+
+      if (digitsC && digitsC.length >= 2) {
+        const cDig = ac.replace(/\D/g, '');
+        const tDig = at.replace(/\D/g, '');
+        if ((cDig && (cDig === digitsC || parseInt(cDig, 10) === parseInt(digitsC, 10))) ||
+            (tDig && (tDig === digitsC || parseInt(tDig, 10) === parseInt(digitsC, 10)))) {
+          return true;
+        }
+      }
+
+      if (digitsS && digitsS.length >= 2) {
+        const sDig = as.replace(/\D/g, '');
+        const tDig = at.replace(/\D/g, '');
+        if ((sDig && (sDig === digitsS || parseInt(sDig, 10) === parseInt(digitsS, 10))) ||
+            (tDig && (tDig === digitsS || parseInt(tDig, 10) === parseInt(digitsS, 10)))) {
+          return true;
+        }
+      }
+
+      return false;
+    });
+
+    if (match) {
+      setMatchedUntrackedExistingAsset(match);
+      setNewDescricaoInput(match.descricao);
+      setNewEstadoInput(match.estado);
+      setNewSerialInput(match.numeroSerie && match.numeroSerie !== '-' ? match.numeroSerie : '');
+      setNewFornecedorInput(match.fornecedor && match.fornecedor !== '-' ? match.fornecedor : '');
+      setNewValorEstimado(String(match.valorAquisicao || match.valorBrutoContabil || ''));
+      setNewOrigemTombo(match.origemTombo || 'CPSMS (Próprio do Consórcio)');
+      if (match.tomboConsorcio) setNewTomboConsorcioInput(match.tomboConsorcio);
+      if (match.tomboSesa || match.tomboOrigemSesa) setNewTomboSesaInput(match.tomboSesa || match.tomboOrigemSesa || '');
+      if (match.tomboUfc) setNewTomboUfcInput(match.tomboUfc);
+      if (match.tomboFcpc) setNewTomboFcpcInput(match.tomboFcpc);
+      if (match.outrosTombos) setNewOutrosTombosInput(match.outrosTombos);
+    } else {
+      setMatchedUntrackedExistingAsset(null);
+    }
+  };
+
+  // Confirm modifying asset location to current room with provisional record
+  const handleConfirmMacroDivergentLocation = (asset: Asset, targetRoom: string, targetUnit: string) => {
+    if (!onUpdateAsset) return;
+    const originalSetor = asset.setorOriginalAspec || asset.setorNome;
+    const originalUnidade = asset.unidadeOriginalAspec || asset.unidadeNome;
+
+    const updated: Asset = {
+      ...asset,
+      setorOriginalAspec: originalSetor,
+      unidadeOriginalAspec: originalUnidade,
+      statusRegularizacaoAspec: 'provisorio',
+      auditoria: {
+        ...asset.auditoria,
+        conferido: true,
+        statusDivergencia: 'setor_divergente',
+        statusRegularizacaoAspec: 'provisorio',
+        gestoraConfirmouAspec: false,
+        unidadeEncontrada: targetUnit,
+        setorEncontrado: targetRoom,
+        subsetorEncontrado: targetRoom,
+        setorOriginalAspec: originalSetor,
+        unidadeOriginalAspec: originalUnidade,
+        divergenciaConfirmada: true,
+        dataConferencia: new Date().toISOString().slice(0, 16).replace('T', ' '),
+        responsavelConferencia: currentProfile.nome,
+        observacaoAuditoria: `[LOCALIZAÇÃO PROVISÓRIA NO CADERNO DE BALANÇO] Bem localizado fisicamente em "${targetRoom}", registrado no sistema ASPEC em "${originalSetor}". Aguardando confirmação de baixa/mudança definitiva no sistema ASPEC pela Gestora.`
+      }
+    };
+
+    onUpdateAsset(updated);
+    setPendingMacroDivergenceConfirm(null);
+    setShowAddUntrackedModal(false);
+    setMatchedUntrackedExistingAsset(null);
+    setFeedbackMsg(`Localização provisória registrada! No ASPEC consta em "${originalSetor}" e no caderno de balanço consta provisoriamente em "${targetRoom}". Aguardando OK oficial da Gestora.`);
+    setTimeout(() => setFeedbackMsg(null), 8000);
+  };
+
+  // Officialization Handler: Gestora gives official OK after confirming definitive baixa in ASPEC
+  const handleConfirmOfficialization = (asset: Asset, protocolo: string, parecer: string) => {
+    if (!onUpdateAsset) return;
+    const targetRoom = asset.auditoria?.setorEncontrado || asset.setorNome;
+    const targetUnit = asset.auditoria?.unidadeEncontrada || asset.unidadeNome;
+
+    const updated: Asset = {
+      ...asset,
+      setorNome: targetRoom,
+      subsetorNome: targetRoom,
+      area: targetRoom,
+      subarea: targetRoom,
+      unidadeNome: targetUnit,
+      statusRegularizacaoAspec: 'oficializado',
+      auditoria: {
+        ...asset.auditoria,
+        conferido: true,
+        statusDivergencia: 'setor_divergente',
+        statusRegularizacaoAspec: 'oficializado',
+        gestoraConfirmouAspec: true,
+        dataOficializacaoAspec: new Date().toISOString(),
+        protocoloOficializacaoAspec: protocolo,
+        responsavelOficializacaoAspec: currentProfile.nome || 'Gestora de Patrimônio',
+        observacaoAuditoria: `Mudança definitiva homologada no ASPEC pela Gestora (${currentProfile.nome || 'Gestora de Patrimônio'}). Dados unificados definitivamente no setor "${targetRoom}". Protocolo: ${protocolo}. ${parecer}`
+      }
+    };
+
+    onUpdateAsset(updated);
+    setFeedbackMsg(`OK Oficial registrado! Baixa processada no ASPEC e registro unificado definitivamente na sala "${targetRoom}".`);
+    setTimeout(() => setFeedbackMsg(null), 8000);
   };
 
   // Submit new asset found on site (Outside ASPEC)
   const handleCreateUntrackedAsset = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newDescricaoInput.trim()) return;
+
+    // Se o bem já existia no cadastro/ASPEC
+    if (matchedUntrackedExistingAsset) {
+      const isOtherSector = matchedUntrackedExistingAsset.setorNome.trim().toLowerCase() !== targetSectorForAdd.trim().toLowerCase();
+      if (isOtherSector) {
+        setPendingMacroDivergenceConfirm({
+          asset: matchedUntrackedExistingAsset,
+          targetRoom: targetSectorForAdd,
+          targetUnit: targetUnitForAdd
+        });
+        return;
+      } else {
+        // Pertence a esta mesma sala
+        if (onUpdateAsset) {
+          onUpdateAsset({
+            ...matchedUntrackedExistingAsset,
+            auditoria: {
+              ...matchedUntrackedExistingAsset.auditoria,
+              conferido: true,
+              dataConferencia: new Date().toISOString().slice(0, 16).replace('T', ' '),
+              responsavelConferencia: currentProfile.nome,
+              statusDivergencia: 'conforme',
+              unidadeEncontrada: activeMacroInfo.id !== 'all' ? activeMacroInfo.nome : matchedUntrackedExistingAsset.unidadeNome,
+              setorEncontrado: targetSectorForAdd,
+              observacaoAuditoria: 'Conferido no Caderno de Balanço.'
+            }
+          });
+        }
+        setShowAddUntrackedModal(false);
+        setMatchedUntrackedExistingAsset(null);
+        setFeedbackMsg(`Item "${matchedUntrackedExistingAsset.descricao}" conferido com sucesso nesta sala!`);
+        setTimeout(() => setFeedbackMsg(null), 5000);
+        return;
+      }
+    }
 
     const unitInfo = units.find(u => u.id === targetUnitForAdd) || {
       id: targetUnitForAdd,
@@ -352,7 +555,7 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
       notaFiscal: 'S/N - Achado Físico',
       fornecedor: newFornecedorInput.trim() || 'A Apurar pelo Consórcio',
       numeroSerie: newSerialInput.trim() || 'S/N',
-      observacoes: `Bem físico identificado na conferência sala a sala em ${new Date().toLocaleDateString('pt-BR')} pela Gestora Maria Gerliane Rocha Magalhães. Não constava na carga inicial do sistema ASPEC. Requer retombamento e regularização contábil.`,
+      observacoes: `Bem físico identificado na conferência sala a sala em ${new Date().toLocaleDateString('pt-BR')} pela Gestora de Patrimônio. Não constava na carga inicial do sistema ASPEC. Requer retombamento e regularização contábil.`,
       auditoria: {
         conferido: true,
         dataConferencia: new Date().toISOString().slice(0, 16).replace('T', ' '),
@@ -366,6 +569,7 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
 
     onAddAsset?.(newAssetObj);
     setShowAddUntrackedModal(false);
+    setMatchedUntrackedExistingAsset(null);
     setFeedbackMsg(`Bem "${newAssetObj.descricao}" (Tombo: ${newAssetObj.tombamento}) adicionado com sucesso à sala "${targetSectorForAdd}" e marcado como Fora do ASPEC!`);
     setTimeout(() => setFeedbackMsg(null), 6000);
   };
@@ -585,7 +789,15 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
               <td style="padding:5px;border:1px solid #cbd5e1;font-size:10px;">${asset.origemTombo.split(' ')[0]}</td>
               <td style="padding:5px;border:1px solid #cbd5e1;">
                 <div style="font-weight:600;color:#0f172a;">${(asset.descricao || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
-                ${isUntracked ? '<div style="font-size:9px;color:#b45309;font-weight:bold;margin-top:2px;">⚠️ IDENTIFICADO FORA DO ASPEC</div>' : ''}
+                ${asset.auditoria?.statusDivergencia === 'setor_divergente' ? `
+                  <div style="font-size:8.5px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:3px 5px;border-radius:3px;margin-top:2px;">
+                    <strong>📍 OBSERVAÇÃO DE LOCALIZAÇÃO PROVISÓRIA NO CADERNO:</strong><br/>
+                    Físico na sala "${room.roomName}". Cadastro oficial ASPEC: "${asset.setorOriginalAspec || asset.setorNome}".
+                    ${asset.statusRegularizacaoAspec === 'oficializado'
+                      ? '<br/><span style="color:#065f46;font-weight:bold;">✓ Registro Definitivo Oficializado no ASPEC pela Gestora. Dados unificados!</span>'
+                      : '<br/><span style="color:#b45309;font-weight:bold;">⏳ Registro definitivo aguarda confirmação de baixa/mudança definitiva no sistema ASPEC (OK Oficial da Gestora).</span>'}
+                  </div>
+                ` : isUntracked ? '<div style="font-size:9px;color:#b45309;font-weight:bold;margin-top:2px;">⚠️ IDENTIFICADO FORA DO ASPEC</div>' : ''}
               </td>
               <td style="font-family:monospace;font-size:10px;padding:5px;border:1px solid #cbd5e1;">${asset.numeroSerie && asset.numeroSerie !== '-' ? asset.numeroSerie : asset.fornecedor || '-'}</td>
               <td style="text-align:center;font-size:10px;padding:5px;border:1px solid #cbd5e1;">${asset.estado}</td>
@@ -1252,7 +1464,7 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
                 CADERNO DE VISTORIA FÍSICA E BALANÇO PATRIMONIAL SALA A SALA — EXERCÍCIO 2026
               </div>
               <div className="text-[10px] text-slate-500 font-mono">
-                Emissão: {new Date().toLocaleDateString('pt-BR')} às {new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} · Presidente da Comissão: Maria Gerliane Rocha Magalhães
+                Emissão: {new Date().toLocaleDateString('pt-BR')} às {new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} · Presidente da Comissão: {currentProfile?.nome || 'Gestora de Patrimônio'}
               </div>
             </div>
 
@@ -1268,6 +1480,34 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
                 3. Caso encontre na sala algum bem <strong>NÃO CONSTANTE NA LISTA DO ASPEC</strong>, anote-o obrigatoriamente no quadro de <em>"Bens Encontrados Fora do ASPEC"</em> abaixo de cada sala para abertura do processo de retombamento e regularização contábil.
               </p>
             </div>
+
+            {/* Search Query Feedback & Observation of Provisional Location */}
+            {reportSearchQuery.trim() && (
+              <div className="p-3 bg-amber-50 border-2 border-amber-300 rounded-xl text-xs space-y-1.5 font-sans animate-in fade-in">
+                <div className="flex items-center justify-between">
+                  <div className="font-black text-amber-950 flex items-center gap-1.5">
+                    <Search className="w-4 h-4 text-amber-700" />
+                    <span>Resultado da Busca no Caderno de Balanço por: "{reportSearchQuery.trim()}"</span>
+                  </div>
+                  <span className="text-[10px] bg-amber-200 text-amber-900 px-2 py-0.5 rounded font-mono font-bold">
+                    {groupedData.reduce((acc, m) => acc + m.totalAssets, 0)} itens encontrados
+                  </span>
+                </div>
+                {groupedData.some(m => m.rooms.some(r => r.assets.some(a => a.statusRegularizacaoAspec === 'provisorio' || a.auditoria?.statusDivergencia === 'setor_divergente'))) && (
+                  <div className="p-2.5 rounded-lg bg-amber-100 border border-amber-300 text-amber-950 text-xs flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                    <div>
+                      <strong className="block text-amber-900 font-black">
+                        Observação de Localização Provisória no Caderno de Balanço:
+                      </strong>
+                      <span>
+                        O bem pesquisado foi localizado fisicamente na sala informada, mas consta registrado no sistema ASPEC em outro setor. Sua localização atual no caderno de balanço é provisória. O registro definitivo na sala só será oficializado após a Gestora confirmar a baixa/mudança definitiva no sistema ASPEC, unificando os dados apenas após o 'OK' oficial.
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* RENDER GROUPED DATA: MACRO -> MICRO */}
             {groupedData.map(macroUnit => (
@@ -1498,6 +1738,51 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
                                   <div className="font-semibold text-slate-900 leading-tight">
                                     {asset.descricao}
                                   </div>
+                                  {asset.auditoria?.statusDivergencia === 'setor_divergente' && (
+                                    <div className="mt-1 p-2 rounded-lg bg-amber-50 border border-amber-300 text-amber-950 text-[10px] leading-tight space-y-1">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className={`px-2 py-0.5 rounded text-[8.5px] font-black uppercase tracking-wider ${
+                                          asset.statusRegularizacaoAspec === 'oficializado'
+                                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                            : 'bg-amber-200 text-amber-900 border border-amber-400'
+                                        }`}>
+                                          {asset.statusRegularizacaoAspec === 'oficializado'
+                                            ? '✓ Oficializado no ASPEC'
+                                            : '📍 Localização Provisória no Caderno'}
+                                        </span>
+                                        <span className="text-[10px] font-bold text-slate-700">
+                                          Registro ASPEC: <strong>{asset.setorOriginalAspec || asset.setorNome}</strong>
+                                        </span>
+                                      </div>
+
+                                      <p className="text-[10px] text-slate-800">
+                                        <strong>Observação:</strong> Localização provisória na sala <strong>"{room.roomName}"</strong> (consta no ASPEC no setor "{asset.setorOriginalAspec || asset.setorNome}").
+                                        {asset.statusRegularizacaoAspec === 'oficializado' ? (
+                                          <span className="text-emerald-800 font-semibold block mt-0.5">
+                                            ✓ Baixa e transferência homologadas com 'OK' Oficial da Gestora. Dados unificados com sucesso nesta sala!
+                                          </span>
+                                        ) : (
+                                          <span className="text-amber-800 font-medium block mt-0.5">
+                                            ⏳ O registro definitivo nesta sala só será oficializado após a Gestora confirmar a baixa/mudança definitiva no sistema ASPEC (OK Oficial).
+                                          </span>
+                                        )}
+                                      </p>
+
+                                      {asset.statusRegularizacaoAspec !== 'oficializado' && (
+                                        <div className="no-print pt-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => setAssetToOfficialize(asset)}
+                                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[9.5px] shadow-xs cursor-pointer transition-colors"
+                                            title="Confirmar baixa contábil e unificar dados nesta sala com OK Oficial da Gestora"
+                                          >
+                                            <CheckCircle2 className="w-3.5 h-3.5" />
+                                            <span>Confirmar Baixa Definitiva no ASPEC (OK Oficial da Gestora)</span>
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                   {isUntracked && (
                                     <span className="text-[9px] text-amber-800 font-bold uppercase block mt-0.5">
                                       ⚠️ IDENTIFICADO FORA DO ASPEC
@@ -1951,8 +2236,10 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
                       type="text"
                       value={newTomboConsorcioInput}
                       onChange={(e) => {
-                        setNewTomboConsorcioInput(e.target.value);
-                        if (!newTomboInput) setNewTomboInput(e.target.value);
+                        const val = e.target.value;
+                        setNewTomboConsorcioInput(val);
+                        if (!newTomboInput) setNewTomboInput(val);
+                        handleMacroTomboLookup(newTomboInput || val, val, newTomboSesaInput, newTomboUfcInput, newTomboFcpcInput, newOutrosTombosInput);
                       }}
                       placeholder="Ex: 0184 ou CPSMS-104"
                       className="w-full p-2 rounded-lg bg-white dark:bg-slate-800 border border-emerald-300 dark:border-emerald-700 font-mono font-bold text-emerald-800 dark:text-emerald-300 text-xs"
@@ -1966,8 +2253,10 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
                       type="text"
                       value={newTomboSesaInput}
                       onChange={(e) => {
-                        setNewTomboSesaInput(e.target.value);
-                        if (!newTomboInput && !newTomboConsorcioInput) setNewTomboInput(e.target.value);
+                        const val = e.target.value;
+                        setNewTomboSesaInput(val);
+                        if (!newTomboInput && !newTomboConsorcioInput) setNewTomboInput(val);
+                        handleMacroTomboLookup(newTomboInput || val, newTomboConsorcioInput, val, newTomboUfcInput, newTomboFcpcInput, newOutrosTombosInput);
                       }}
                       placeholder="Ex: 124589"
                       className="w-full p-2 rounded-lg bg-white dark:bg-slate-800 border border-blue-300 dark:border-blue-700 font-mono font-bold text-blue-700 dark:text-blue-300 text-xs"
@@ -1982,7 +2271,11 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
                     <input
                       type="text"
                       value={newTomboUfcInput}
-                      onChange={(e) => setNewTomboUfcInput(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setNewTomboUfcInput(val);
+                        handleMacroTomboLookup(newTomboInput, newTomboConsorcioInput, newTomboSesaInput, val, newTomboFcpcInput, newOutrosTombosInput);
+                      }}
                       placeholder="Ex: UFC-0492"
                       className="w-full p-2 rounded-lg bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 font-mono font-bold text-amber-900 dark:text-amber-300 text-xs"
                     />
@@ -1994,7 +2287,11 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
                     <input
                       type="text"
                       value={newTomboFcpcInput}
-                      onChange={(e) => setNewTomboFcpcInput(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setNewTomboFcpcInput(val);
+                        handleMacroTomboLookup(newTomboInput, newTomboConsorcioInput, newTomboSesaInput, newTomboUfcInput, val, newOutrosTombosInput);
+                      }}
                       placeholder="Ex: FCPC-1092"
                       className="w-full p-2 rounded-lg bg-white dark:bg-slate-800 border border-purple-300 dark:border-purple-700 font-mono font-bold text-purple-900 dark:text-purple-300 text-xs"
                     />
@@ -2007,12 +2304,46 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
                   <input
                     type="text"
                     value={newOutrosTombosInput}
-                    onChange={(e) => setNewOutrosTombosInput(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setNewOutrosTombosInput(val);
+                      handleMacroTomboLookup(newTomboInput, newTomboConsorcioInput, newTomboSesaInput, newTomboUfcInput, newTomboFcpcInput, val);
+                    }}
                     placeholder="Ex: Tombo Municipal 4410, retombamento anterior..."
                     className="w-full p-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-xs"
                   />
                 </div>
               </div>
+
+              {/* Card de Bem Encontrado no ASPEC com especificações puxadas automaticamente */}
+              {matchedUntrackedExistingAsset && (
+                <div className={`p-3 rounded-xl border text-xs space-y-1 ${
+                  matchedUntrackedExistingAsset.setorNome.trim().toLowerCase() !== targetSectorForAdd.trim().toLowerCase()
+                    ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700 text-amber-950 dark:text-amber-200'
+                    : 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-700 text-emerald-950 dark:text-emerald-200'
+                }`}>
+                  <div className="flex items-center gap-1.5 font-bold">
+                    {matchedUntrackedExistingAsset.setorNome.trim().toLowerCase() !== targetSectorForAdd.trim().toLowerCase() ? (
+                      <>
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>Atenção: Este item pertence oficialmente a outro setor no ASPEC!</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Item encontrado no cadastro desta mesma sala no ASPEC!</span>
+                      </>
+                    )}
+                  </div>
+                  <div className="text-[11.5px] leading-relaxed pt-0.5">
+                    <strong>Item:</strong> {matchedUntrackedExistingAsset.descricao} (Tombo: {matchedUntrackedExistingAsset.tombamento})<br />
+                    <strong>Setor no ASPEC:</strong> <span className="font-bold underline decoration-amber-500">{matchedUntrackedExistingAsset.setorNome}</span> ({matchedUntrackedExistingAsset.unidadeNome})<br />
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
+                      ✓ Todas as especificações cadastrais foram carregadas automaticamente abaixo.
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {/* Description */}
               <div>
@@ -2100,13 +2431,13 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
                 <button
                   type="button"
                   onClick={() => setShowAddUntrackedModal(false)}
-                  className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 font-semibold"
+                  className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 font-semibold cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg shadow-sm"
+                  className="px-5 py-2 font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg shadow-sm cursor-pointer"
                 >
                   Salvar Tombo Encontrado
                 </button>
@@ -2115,6 +2446,83 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
           </div>
         </div>
       )}
+
+      {/* Modal / Confirmação de Divergência de Setor no Caderno de Balanço */}
+      {pendingMacroDivergenceConfirm && (
+        <div className="fixed inset-0 z-80 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-2xl border-2 border-amber-400 dark:border-amber-600 shadow-2xl max-w-lg w-full p-5 sm:p-6 space-y-4">
+            
+            <div className="flex items-start gap-3">
+              <div className="p-3 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shrink-0">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <span className="text-[10px] uppercase font-black px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300">
+                  Aviso de Divergência de Localização
+                </span>
+                <h3 className="text-base sm:text-lg font-black text-slate-950 dark:text-white leading-snug">
+                  Tem certeza que deseja modificar? O item está no setor {pendingMacroDivergenceConfirm.asset.setorNome}
+                </h3>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 text-xs space-y-2">
+              <div className="font-bold text-slate-900 dark:text-white flex items-center justify-between">
+                <span>{pendingMacroDivergenceConfirm.asset.descricao}</span>
+                <span className="font-mono bg-slate-200 dark:bg-slate-750 px-2 py-0.5 rounded text-[11px]">
+                  Tombo: {pendingMacroDivergenceConfirm.asset.tombamento}
+                </span>
+              </div>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px]">
+                <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50">
+                  <span className="text-[10px] uppercase font-bold text-amber-800 dark:text-amber-400 block">No ASPEC (Cadastro Oficial):</span>
+                  <strong className="text-slate-900 dark:text-white font-black">{pendingMacroDivergenceConfirm.asset.setorNome}</strong>
+                  <div className="text-[10px] text-slate-500">{pendingMacroDivergenceConfirm.asset.unidadeNome}</div>
+                </div>
+
+                <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50">
+                  <span className="text-[10px] uppercase font-bold text-emerald-800 dark:text-emerald-400 block">No Sistema / Físico (Sala Conferida):</span>
+                  <strong className="text-slate-900 dark:text-white font-black">{pendingMacroDivergenceConfirm.targetRoom}</strong>
+                  <div className="text-[10px] text-slate-500">{pendingMacroDivergenceConfirm.targetUnit}</div>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed pt-1">
+                ℹ️ Esta informação ficará salva no sistema e no <strong>relatório da sala</strong>, informando que no ASPEC a localização é <strong>"{pendingMacroDivergenceConfirm.asset.setorNome}"</strong> e que no sistema/físico está na sala conferida <strong>"{pendingMacroDivergenceConfirm.targetRoom}"</strong>.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setPendingMacroDivergenceConfirm(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => handleConfirmMacroDivergentLocation(pendingMacroDivergenceConfirm.asset, pendingMacroDivergenceConfirm.targetRoom, pendingMacroDivergenceConfirm.targetUnit)}
+                className="px-5 py-2 text-xs font-black text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg shadow-sm cursor-pointer transition-colors flex items-center gap-1.5"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Sim, Modificar Localização</span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Homologação / OK Oficial da Gestora no ASPEC */}
+      <AspecOfficializationModal
+        isOpen={!!assetToOfficialize}
+        onClose={() => setAssetToOfficialize(null)}
+        asset={assetToOfficialize}
+        currentProfile={currentProfile}
+        onConfirm={handleConfirmOfficialization}
+      />
 
     </div>
   );

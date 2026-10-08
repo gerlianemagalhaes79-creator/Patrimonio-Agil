@@ -38,6 +38,7 @@ import { AspecReconciliationModal } from './AspecReconciliationModal';
 import { InventorySolutionsGuideModal } from './InventorySolutionsGuideModal';
 import { RoomAspecReportModal } from './RoomAspecReportModal';
 import { UnlocatedAssetsReportModal } from './UnlocatedAssetsReportModal';
+import { AspecOfficializationModal } from './AspecOfficializationModal';
 
 interface AuditViewProps {
   assets: Asset[];
@@ -55,6 +56,9 @@ interface AuditViewProps {
       unidadeEncontrada?: string;
       setorEncontrado?: string;
       subsetorEncontrado?: string;
+      setorOriginalAspec?: string;
+      unidadeOriginalAspec?: string;
+      divergenciaConfirmada?: boolean;
       observacaoAuditoria: string;
       responsavelConferencia: string;
     }
@@ -123,6 +127,15 @@ export const AuditView: React.FC<AuditViewProps> = ({
   const [roomNewSerial, setRoomNewSerial] = useState('');
   const [roomNewFornecedor, setRoomNewFornecedor] = useState('');
   const [roomNewValor, setRoomNewValor] = useState('');
+  const [matchedExistingAsset, setMatchedExistingAsset] = useState<Asset | null>(null);
+
+  // Modal / Confirmação de Divergência de Setor
+  const [pendingDivergenceConfirmation, setPendingDivergenceConfirmation] = useState<{
+    asset: Asset;
+    targetRoom: string;
+    targetUnit: string;
+  } | null>(null);
+  const [assetToOfficialize, setAssetToOfficialize] = useState<Asset | null>(null);
 
   // Camera / Optional Scanner State
   const [cameraActive, setCameraActive] = useState(false);
@@ -171,6 +184,14 @@ export const AuditView: React.FC<AuditViewProps> = ({
   // Assets belonging to currently selected Unit
   const unitAssets = useMemo(() => {
     return assets.filter(a => {
+      const uEncontrada = (a.auditoria?.unidadeEncontrada || '').toLowerCase();
+      const inThisUnitFound = (selectedUnitId === 'policlinica' && uEncontrada.includes('poli')) ||
+        (selectedUnitId === 'ceo' && uEncontrada.includes('ceo')) ||
+        (selectedUnitId === 'sede-cpsms' && (uEncontrada.includes('sede') || uEncontrada.includes('consórcio'))) ||
+        (selectedUnitId === 'cer' && uEncontrada.includes('cer'));
+
+      if (inThisUnitFound) return true;
+
       if (selectedUnitId === 'policlinica') return a.unidadeId === 'policlinica' || a.unidadeNome.toLowerCase().includes('poli');
       if (selectedUnitId === 'ceo') return a.unidadeId === 'ceo' || a.unidadeNome.toLowerCase().includes('ceo');
       if (selectedUnitId === 'sede-cpsms') return a.unidadeId === 'sede-cpsms' || a.unidadeNome.toLowerCase().includes('sede') || a.unidadeNome.toLowerCase().includes('consórcio');
@@ -297,11 +318,12 @@ export const AuditView: React.FC<AuditViewProps> = ({
   const activeSectorAssets = useMemo(() => {
     if (!activeSector) return [];
     const secLower = activeSector.nome.trim().toLowerCase();
-    let list = unitAssets.filter(a => {
+    let list = assets.filter(a => {
       const aSetor = (a.setorNome || '').trim().toLowerCase();
       const aArea = (a.area || '').trim().toLowerCase();
       const aSub = (a.subsetorNome || a.subarea || '').trim().toLowerCase();
-      return aSetor === secLower || aSub === secLower || aArea === secLower;
+      const aEncontrado = (a.auditoria?.setorEncontrado || '').trim().toLowerCase();
+      return aSetor === secLower || aSub === secLower || aArea === secLower || aEncontrado === secLower;
     });
 
     if (roomStatusFilter === 'pendentes') {
@@ -388,10 +410,213 @@ export const AuditView: React.FC<AuditViewProps> = ({
     setTimeout(() => setBulkFeedback(null), 5000);
   };
 
+  // Live lookup: Automatically pull all asset specifications when entering tombo
+  const handleTomboLookup = (tomboVal: string, sesaVal: string) => {
+    const cleanT = tomboVal.trim().toLowerCase();
+    const cleanS = sesaVal.trim().toLowerCase();
+    if (!cleanT && !cleanS) {
+      setMatchedExistingAsset(null);
+      return;
+    }
+
+    const digitsT = cleanT.replace(/\D/g, '');
+    const digitsS = cleanS.replace(/\D/g, '');
+
+    const match = assets.find(a => {
+      const tVal = a.tombamento.toLowerCase();
+      const cVal = (a.tomboConsorcio || '').toLowerCase();
+      const sVal = (a.tomboSesa || a.tomboOrigemSesa || '').toLowerCase();
+      const uVal = (a.tomboUfc || '').toLowerCase();
+      const fVal = (a.tomboFcpc || '').toLowerCase();
+      const oVal = (a.outrosTombos || a.tomboSecundario || '').toLowerCase();
+
+      // Direct string matches
+      const matchesT = cleanT && (tVal === cleanT || cVal === cleanT || sVal === cleanT || uVal === cleanT || fVal === cleanT || oVal === cleanT);
+      const matchesS = cleanS && (sVal === cleanS || tVal === cleanS);
+      if (matchesT || matchesS) return true;
+
+      // Numeric digit matching (e.g., '0184' matches '184', 'CPSMS-0184', etc.)
+      if (digitsT && digitsT.length >= 2) {
+        const tDig = tVal.replace(/\D/g, '');
+        const cDig = cVal.replace(/\D/g, '');
+        const sDig = sVal.replace(/\D/g, '');
+        if ((tDig && (tDig === digitsT || parseInt(tDig, 10) === parseInt(digitsT, 10))) ||
+            (cDig && (cDig === digitsT || parseInt(cDig, 10) === parseInt(digitsT, 10))) ||
+            (sDig && (sDig === digitsT || parseInt(sDig, 10) === parseInt(digitsT, 10)))) {
+          return true;
+        }
+      }
+
+      if (digitsS && digitsS.length >= 2) {
+        const sDig = sVal.replace(/\D/g, '');
+        const tDig = tVal.replace(/\D/g, '');
+        if ((sDig && (sDig === digitsS || parseInt(sDig, 10) === parseInt(digitsS, 10))) ||
+            (tDig && (tDig === digitsS || parseInt(tDig, 10) === parseInt(digitsS, 10)))) {
+          return true;
+        }
+      }
+
+      return false;
+    });
+
+    if (match) {
+      setMatchedExistingAsset(match);
+      // Puxar automaticamente todos os dados e especificações cadastrais
+      setRoomNewDescricao(match.descricao);
+      setRoomNewEstado(match.estado);
+      setRoomNewSerial(match.numeroSerie && match.numeroSerie !== '-' ? match.numeroSerie : '');
+      setRoomNewFornecedor(match.fornecedor && match.fornecedor !== '-' ? match.fornecedor : '');
+      setRoomNewValor(String(match.valorAquisicao || match.valorBrutoContabil || ''));
+      if (match.tomboOrigemSesa || match.tomboSesa) {
+        setRoomNewTomboSesa(match.tomboOrigemSesa || match.tomboSesa || '');
+      }
+      if (match.tomboConsorcio) {
+        setRoomNewTombo(match.tomboConsorcio);
+      }
+    } else {
+      setMatchedExistingAsset(null);
+    }
+  };
+
+  // Confirm modifying asset location to current room with provisional record
+  const handleConfirmDivergentLocation = (asset: Asset, targetRoom: string, targetUnit: string) => {
+    const originalSetor = asset.setorOriginalAspec || asset.setorNome;
+    const originalUnidade = asset.unidadeOriginalAspec || asset.unidadeNome;
+
+    const updated: Asset = {
+      ...asset,
+      setorOriginalAspec: originalSetor,
+      unidadeOriginalAspec: originalUnidade,
+      statusRegularizacaoAspec: 'provisorio',
+      auditoria: {
+        ...asset.auditoria,
+        conferido: true,
+        statusDivergencia: 'setor_divergente',
+        statusRegularizacaoAspec: 'provisorio',
+        gestoraConfirmouAspec: false,
+        unidadeEncontrada: targetUnit,
+        setorEncontrado: targetRoom,
+        subsetorEncontrado: targetRoom,
+        setorOriginalAspec: originalSetor,
+        unidadeOriginalAspec: originalUnidade,
+        divergenciaConfirmada: true,
+        dataConferencia: new Date().toISOString().slice(0, 16).replace('T', ' '),
+        responsavelConferencia: currentProfile.nome,
+        observacaoAuditoria: `[LOCALIZAÇÃO PROVISÓRIA NO CADERNO DE BALANÇO] Bem localizado fisicamente na sala "${targetRoom}", porém registrado no sistema ASPEC no setor "${originalSetor}". Aguardando confirmação de baixa/mudança definitiva no sistema ASPEC pela Gestora.`
+      }
+    };
+
+    if (onUpdateAsset) {
+      onUpdateAsset(updated);
+    } else {
+      onUpdateAudit(asset.id, {
+        conferido: true,
+        statusDivergencia: 'setor_divergente',
+        unidadeEncontrada: targetUnit,
+        setorEncontrado: targetRoom,
+        subsetorEncontrado: targetRoom,
+        setorOriginalAspec: originalSetor,
+        unidadeOriginalAspec: originalUnidade,
+        divergenciaConfirmada: true,
+        observacaoAuditoria: updated.auditoria.observacaoAuditoria || '',
+        responsavelConferencia: currentProfile.nome
+      });
+    }
+
+    setPendingDivergenceConfirmation(null);
+    setShowAddRoomAssetModal(false);
+    setForeignTomboFeedback(null);
+    setForeignTomboInput('');
+    setRoomNewTombo('');
+    setRoomNewTomboSesa('');
+    setRoomNewDescricao('');
+    setRoomNewSerial('');
+    setRoomNewFornecedor('');
+    setRoomNewValor('');
+    setMatchedExistingAsset(null);
+    setBulkFeedback(`Localização provisória registrada! No ASPEC consta em "${originalSetor}" e na vistoria consta provisoriamente em "${targetRoom}". Aguardando OK oficial da Gestora.`);
+    setTimeout(() => setBulkFeedback(null), 8000);
+  };
+
+  // Officialization Handler: Gestora gives official OK after confirming definitive baixa in ASPEC
+  const handleConfirmOfficialization = (asset: Asset, protocolo: string, parecer: string) => {
+    const targetRoom = asset.auditoria?.setorEncontrado || asset.setorNome;
+    const targetUnit = asset.auditoria?.unidadeEncontrada || asset.unidadeNome;
+
+    const updated: Asset = {
+      ...asset,
+      setorNome: targetRoom,
+      subsetorNome: targetRoom,
+      area: targetRoom,
+      subarea: targetRoom,
+      unidadeNome: targetUnit,
+      statusRegularizacaoAspec: 'oficializado',
+      auditoria: {
+        ...asset.auditoria,
+        conferido: true,
+        statusDivergencia: 'setor_divergente',
+        statusRegularizacaoAspec: 'oficializado',
+        gestoraConfirmouAspec: true,
+        dataOficializacaoAspec: new Date().toISOString(),
+        protocoloOficializacaoAspec: protocolo,
+        responsavelOficializacaoAspec: currentProfile.nome || 'Gestora de Patrimônio',
+        observacaoAuditoria: `Mudança definitiva homologada no ASPEC pela Gestora (${currentProfile.nome || 'Gestora de Patrimônio'}). Dados unificados definitivamente no setor "${targetRoom}". Protocolo: ${protocolo}. ${parecer}`
+      }
+    };
+
+    if (onUpdateAsset) {
+      onUpdateAsset(updated);
+    } else {
+      onUpdateAudit(asset.id, {
+        conferido: true,
+        statusDivergencia: 'setor_divergente',
+        unidadeEncontrada: targetUnit,
+        setorEncontrado: targetRoom,
+        subsetorEncontrado: targetRoom,
+        setorOriginalAspec: updated.auditoria.setorOriginalAspec,
+        unidadeOriginalAspec: updated.auditoria.unidadeOriginalAspec,
+        divergenciaConfirmada: true,
+        observacaoAuditoria: updated.auditoria.observacaoAuditoria || '',
+        responsavelConferencia: currentProfile.nome
+      });
+    }
+
+    setBulkFeedback(`OK Oficial confirmado pela Gestora! Baixa processada no ASPEC e dados unificados com sucesso na sala "${targetRoom}".`);
+    setTimeout(() => setBulkFeedback(null), 8000);
+  };
+
   // Quick Action: Save an Untracked Asset found while inspecting this room
   const handleSaveRoomUntrackedAsset = (e: React.FormEvent) => {
     e.preventDefault();
     if (!roomNewDescricao.trim() || !activeSector) return;
+
+    // Se o bem já existia no banco/ASPEC
+    if (matchedExistingAsset) {
+      const isOtherSector = matchedExistingAsset.setorNome.trim().toLowerCase() !== activeSector.nome.trim().toLowerCase();
+      if (isOtherSector) {
+        // Disparar confirmação de modificação de setor obrigatória
+        setPendingDivergenceConfirmation({
+          asset: matchedExistingAsset,
+          targetRoom: activeSector.nome,
+          targetUnit: activeUnitInfo.nome
+        });
+        return;
+      } else {
+        // Já pertencia a esta sala no ASPEC
+        handleQuickConfirm(matchedExistingAsset);
+        setShowAddRoomAssetModal(false);
+        setRoomNewTombo('');
+        setRoomNewTomboSesa('');
+        setRoomNewDescricao('');
+        setRoomNewSerial('');
+        setRoomNewFornecedor('');
+        setRoomNewValor('');
+        setMatchedExistingAsset(null);
+        setBulkFeedback(`Item "${matchedExistingAsset.descricao}" conferido com sucesso nesta sala!`);
+        setTimeout(() => setBulkFeedback(null), 5000);
+        return;
+      }
+    }
 
     const parsedVal = parseFloat(roomNewValor.replace(',', '.')) || 0;
     const tomboFinal = roomNewSemPlaqueta
@@ -458,6 +683,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
     setRoomNewFornecedor('');
     setRoomNewValor('');
     setRoomNewSemPlaqueta(false);
+    setMatchedExistingAsset(null);
     setBulkFeedback(`Item "${newAsset.descricao}" (${newAsset.tombamento}) registrado na sala "${activeSector.nome}" e incluído na lista para o ASPEC!`);
     setTimeout(() => setBulkFeedback(null), 6000);
   };
@@ -468,8 +694,12 @@ export const AuditView: React.FC<AuditViewProps> = ({
     const q = foreignTomboInput.trim().toLowerCase();
     const matched = assets.find(a => 
       a.tombamento.toLowerCase() === q ||
-      a.tombamento.toLowerCase().includes(q) ||
-      (a.tomboOrigemSesa && a.tomboOrigemSesa.toLowerCase() === q)
+      (a.tomboConsorcio && a.tomboConsorcio.toLowerCase() === q) ||
+      (a.tomboOrigemSesa && a.tomboOrigemSesa.toLowerCase() === q) ||
+      (a.tomboSesa && a.tomboSesa.toLowerCase() === q) ||
+      (a.tomboUfc && a.tomboUfc.toLowerCase() === q) ||
+      (a.tomboFcpc && a.tomboFcpc.toLowerCase() === q) ||
+      (a.outrosTombos && a.outrosTombos.toLowerCase() === q)
     );
 
     if (!matched) {
@@ -493,43 +723,34 @@ export const AuditView: React.FC<AuditViewProps> = ({
       });
     } else {
       // Belongs to another room in ASPEC! Remanejamento detectado!
+      setPendingDivergenceConfirmation({
+        asset: matched,
+        targetRoom: activeSector.nome,
+        targetUnit: activeUnitInfo.nome
+      });
       setForeignTomboFeedback({
         type: 'found_other',
         asset: matched,
-        message: `O Tombo ${matched.tombamento} (${matched.descricao}) está cadastrado no ASPEC em: "${matched.setorNome}" (${matched.unidadeNome}).`
+        message: `Tem certeza que deseja modificar? O item está no setor "${matched.setorNome}" (${matched.unidadeNome}).`
       });
     }
   };
 
   const handleConfirmForeignAssetInCurrentRoom = (asset: Asset) => {
     if (!activeSector) return;
-    onUpdateAudit(asset.id, {
-      conferido: true,
-      statusDivergencia: 'setor_divergente',
-      unidadeEncontrada: activeUnitInfo.nome,
-      setorEncontrado: activeSector.nome,
-      subsetorEncontrado: activeSector.nome,
-      observacaoAuditoria: `Encontrado in loco na sala "${activeSector.nome}". Cadastrado no ASPEC no setor "${asset.setorNome}".`,
-      responsavelConferencia: currentProfile.nome
-    });
-
-    setForeignTomboFeedback({
-      type: 'success',
-      message: `Registrado com sucesso! O Tombo ${asset.tombamento} foi anotado como presente nesta sala (${activeSector.nome}). O cadastro original do ASPEC foi preservado e o item já consta no espelho "O Que Alterar no ASPEC".`
-    });
-    setForeignTomboInput('');
-    setTimeout(() => setForeignTomboFeedback(null), 8000);
+    handleConfirmDivergentLocation(asset, activeSector.nome, activeUnitInfo.nome);
   };
 
   // Generate standalone printable HTML for the current room
   const generateRoomSheetHtml = (): string => {
     if (!activeSector) return '';
     const secLower = activeSector.nome.trim().toLowerCase();
-    const roomAssets = unitAssets.filter(a => {
+    const roomAssets = assets.filter(a => {
       const aSetor = (a.setorNome || '').trim().toLowerCase();
       const aArea = (a.area || '').trim().toLowerCase();
       const aSub = (a.subsetorNome || a.subarea || '').trim().toLowerCase();
-      return aSetor === secLower || aSub === secLower || aArea === secLower;
+      const aEncontrado = (a.auditoria?.setorEncontrado || '').trim().toLowerCase();
+      return aSetor === secLower || aSub === secLower || aArea === secLower || aEncontrado === secLower;
     });
 
     const emissionDate = new Date();
@@ -539,18 +760,27 @@ export const AuditView: React.FC<AuditViewProps> = ({
     const rowsHtml = roomAssets.map((asset, idx) => {
       const isChecked = asset.auditoria?.conferido;
       const isUntracked = asset.foraDoAspec;
+      const isDivergent = asset.auditoria?.statusDivergencia === 'setor_divergente';
       const tomboSesa = asset.tomboOrigemSesa || (asset.tombamento.replace(/\D/g, '').length >= 6 ? asset.tombamento : '-');
       const val = asset.valorAquisicao || 0;
 
       return `
-        <tr style="${isUntracked ? 'background:#fffbeb;' : idx % 2 === 1 ? 'background:#f8fafc;' : ''}">
+        <tr style="${isDivergent ? 'background:#fefce8;' : isUntracked ? 'background:#fffbeb;' : idx % 2 === 1 ? 'background:#f8fafc;' : ''}">
           <td style="text-align:center;padding:5px;border:1px solid #cbd5e1;font-size:12px;">${isChecked ? '☑' : '☐'}</td>
           <td style="font-family:monospace;font-weight:bold;padding:5px;border:1px solid #cbd5e1;white-space:nowrap;">${asset.tombamento}</td>
           <td style="font-family:monospace;font-weight:bold;color:#1e40af;padding:5px;border:1px solid #cbd5e1;white-space:nowrap;">${tomboSesa}</td>
           <td style="padding:5px;border:1px solid #cbd5e1;font-size:10px;">${asset.origemTombo.split(' ')[0]}</td>
           <td style="padding:5px;border:1px solid #cbd5e1;">
             <div style="font-weight:600;color:#0f172a;">${(asset.descricao || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
-            ${isUntracked ? '<div style="font-size:9px;color:#b45309;font-weight:bold;margin-top:2px;">⚠️ IDENTIFICADO FORA DO ASPEC</div>' : ''}
+            ${isDivergent ? `
+              <div style="font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:3px 5px;border-radius:4px;margin-top:3px;line-height:1.3;">
+                <strong>📍 OBSERVAÇÃO DE LOCALIZAÇÃO PROVISÓRIA:</strong><br/>
+                Físico na sala "${activeSector.nome}". No ASPEC o registro é "${asset.setorOriginalAspec || asset.setorNome}".<br/>
+                ${asset.statusRegularizacaoAspec === 'oficializado'
+                  ? '<span style="color:#065f46;font-weight:bold;">✓ Mudança definitiva homologada no ASPEC pela Gestora. Dados unificados!</span>'
+                  : '<span style="color:#b45309;font-weight:bold;">⏳ Registro definitivo pendente de confirmação de baixa/mudança no ASPEC pela Gestora (OK Oficial).</span>'}
+              </div>
+            ` : isUntracked ? '<div style="font-size:9px;color:#b45309;font-weight:bold;margin-top:2px;">⚠️ IDENTIFICADO FORA DO ASPEC</div>' : ''}
           </td>
           <td style="font-family:monospace;font-size:10px;padding:5px;border:1px solid #cbd5e1;">${asset.numeroSerie && asset.numeroSerie !== '-' ? asset.numeroSerie : asset.fornecedor || '-'}</td>
           <td style="text-align:center;font-size:10px;padding:5px;border:1px solid #cbd5e1;">${asset.estado}</td>
@@ -1440,8 +1670,44 @@ export const AuditView: React.FC<AuditViewProps> = ({
 
                           {isDivergent && (
                             <div className="text-[11px] text-amber-700 dark:text-amber-300 font-semibold pt-1 flex items-center gap-1.5">
-                              <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                              <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                               <span>{asset.auditoria?.observacaoAuditoria || 'Divergência registrada'}</span>
+                            </div>
+                          )}
+
+                          {asset.auditoria?.statusDivergencia === 'setor_divergente' && (
+                            <div className="mt-2 p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 text-xs text-amber-950 dark:text-amber-200 space-y-1.5">
+                              <div className="flex items-center gap-1.5 font-bold text-[11px] text-amber-900 dark:text-amber-300 flex-wrap">
+                                <span className={`px-2 py-0.5 rounded text-[9px] uppercase font-black tracking-wide ${
+                                  asset.statusRegularizacaoAspec === 'oficializado'
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                    : 'bg-amber-200 text-amber-950 border border-amber-400'
+                                }`}>
+                                  {asset.statusRegularizacaoAspec === 'oficializado' ? '✓ Oficializado no ASPEC' : '📍 Localização Provisória no Caderno'}
+                                </span>
+                                <span>{asset.statusRegularizacaoAspec === 'oficializado' ? 'Dados Unificados Oficialmente' : 'Aguardando Baixa Definitiva no ASPEC'}</span>
+                              </div>
+                              <div className="text-[11px] leading-snug text-slate-800 dark:text-slate-200">
+                                • Registro Original no ASPEC: <strong>{asset.setorOriginalAspec || asset.setorNome}</strong> ({asset.unidadeOriginalAspec || asset.unidadeNome})<br />
+                                • Localização Física Conferida: <strong className="text-emerald-800 dark:text-emerald-300 font-bold">{asset.auditoria?.setorEncontrado || activeSector?.nome}</strong>
+                              </div>
+                              <p className="text-[10px] text-slate-600 dark:text-slate-400 italic">
+                                {asset.statusRegularizacaoAspec === 'oficializado'
+                                  ? '✓ Baixa contábil confirmada pela Gestora. Registros físicos e contábeis unificados com sucesso nesta sala.'
+                                  : '* O registro definitivo nesta sala só deve ser oficializado após a Gestora confirmar a baixa/mudança definitiva no sistema ASPEC (unificando os dados após o "OK" oficial).'}
+                              </p>
+                              {asset.statusRegularizacaoAspec !== 'oficializado' && (
+                                <div className="pt-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setAssetToOfficialize(asset)}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-xs cursor-pointer transition-colors"
+                                  >
+                                    <CheckCircle2 className="w-4 h-4" />
+                                    <span>Confirmar Baixa Definitiva no ASPEC (OK Oficial da Gestora)</span>
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1890,7 +2156,10 @@ export const AuditView: React.FC<AuditViewProps> = ({
                   <input
                     type="text"
                     value={roomNewTombo}
-                    onChange={(e) => setRoomNewTombo(e.target.value)}
+                    onChange={(e) => {
+                      setRoomNewTombo(e.target.value);
+                      handleTomboLookup(e.target.value, roomNewTomboSesa);
+                    }}
                     placeholder="Ex: 0184 ou CPSMS-..."
                     className="w-full p-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono font-bold"
                   />
@@ -1902,13 +2171,46 @@ export const AuditView: React.FC<AuditViewProps> = ({
                   <input
                     type="text"
                     value={roomNewTomboSesa}
-                    onChange={(e) => setRoomNewTomboSesa(e.target.value)}
+                    onChange={(e) => {
+                      setRoomNewTomboSesa(e.target.value);
+                      handleTomboLookup(roomNewTombo, e.target.value);
+                    }}
                     placeholder="Ex: 102450"
                     className="w-full p-2 rounded-lg bg-white dark:bg-slate-800 border border-blue-300 dark:border-blue-700 font-mono font-bold text-blue-700 dark:text-blue-200"
                   />
                   <span className="text-[10px] text-slate-400 block mt-0.5">Implantação estadual</span>
                 </div>
               </div>
+
+              {/* Card de Bem Encontrado no ASPEC com especificações puxadas automaticamente */}
+              {matchedExistingAsset && (
+                <div className={`p-3 rounded-xl border text-xs space-y-1 ${
+                  matchedExistingAsset.setorNome.trim().toLowerCase() !== activeSector.nome.trim().toLowerCase()
+                    ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700 text-amber-950 dark:text-amber-200'
+                    : 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-700 text-emerald-950 dark:text-emerald-200'
+                }`}>
+                  <div className="flex items-center gap-1.5 font-bold">
+                    {matchedExistingAsset.setorNome.trim().toLowerCase() !== activeSector.nome.trim().toLowerCase() ? (
+                      <>
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>Atenção: Este item pertence oficialmente a outro setor no ASPEC!</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Item encontrado no cadastro desta mesma sala no ASPEC!</span>
+                      </>
+                    )}
+                  </div>
+                  <div className="text-[11.5px] leading-relaxed pt-0.5">
+                    <strong>Item:</strong> {matchedExistingAsset.descricao} (Tombo: {matchedExistingAsset.tombamento})<br />
+                    <strong>Setor no ASPEC:</strong> <span className="font-bold underline decoration-amber-500">{matchedExistingAsset.setorNome}</span> ({matchedExistingAsset.unidadeNome})<br />
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
+                      ✓ Todas as especificações cadastrais foram carregadas automaticamente abaixo.
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {/* Description */}
               <div>
@@ -2002,7 +2304,73 @@ export const AuditView: React.FC<AuditViewProps> = ({
         </div>
       )}
 
-      {/* Caderno de Balanço & Inventário Geral (Macro ➔ Micro) com campos para itens fora do ASPEC */}
+      {/* Modal / Confirmação de Divergência de Setor */}
+      {pendingDivergenceConfirmation && (
+        <div className="fixed inset-0 z-80 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-2xl border-2 border-amber-400 dark:border-amber-600 shadow-2xl max-w-lg w-full p-5 sm:p-6 space-y-4">
+            
+            <div className="flex items-start gap-3">
+              <div className="p-3 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shrink-0">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <span className="text-[10px] uppercase font-black px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300">
+                  Aviso de Divergência de Setor · Localização Provisória
+                </span>
+                <h3 className="text-base sm:text-lg font-black text-slate-950 dark:text-white leading-snug">
+                  Bem encontrado nesta sala, mas registrado no ASPEC em "{pendingDivergenceConfirmation.asset.setorNome}"
+                </h3>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 text-xs space-y-2">
+              <div className="font-bold text-slate-900 dark:text-white flex items-center justify-between">
+                <span>{pendingDivergenceConfirmation.asset.descricao}</span>
+                <span className="font-mono bg-slate-200 dark:bg-slate-750 px-2 py-0.5 rounded text-[11px]">
+                  Tombo: {pendingDivergenceConfirmation.asset.tombamento}
+                </span>
+              </div>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px]">
+                <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50">
+                  <span className="text-[10px] uppercase font-bold text-amber-800 dark:text-amber-400 block">No ASPEC (Cadastro Oficial):</span>
+                  <strong className="text-slate-900 dark:text-white font-black">{pendingDivergenceConfirmation.asset.setorNome}</strong>
+                  <div className="text-[10px] text-slate-500">{pendingDivergenceConfirmation.asset.unidadeNome}</div>
+                </div>
+
+                <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50">
+                  <span className="text-[10px] uppercase font-bold text-emerald-800 dark:text-emerald-400 block">No Físico (Localização Provisória):</span>
+                  <strong className="text-slate-900 dark:text-white font-black">{pendingDivergenceConfirmation.targetRoom}</strong>
+                  <div className="text-[10px] text-slate-500">{pendingDivergenceConfirmation.targetUnit}</div>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed pt-1">
+                ℹ️ Ao confirmar, constará uma <strong>observação de localização provisória no caderno de balanço</strong> e na folha da sala. O registro definitivo nesta sala (<strong>"{pendingDivergenceConfirmation.targetRoom}"</strong>) só será oficializado após a Gestora confirmar a baixa/mudança definitiva no sistema ASPEC, unificando os dados apenas após o "OK" oficial.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setPendingDivergenceConfirmation(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => handleConfirmDivergentLocation(pendingDivergenceConfirmation.asset, pendingDivergenceConfirmation.targetRoom, pendingDivergenceConfirmation.targetUnit)}
+                className="px-5 py-2 text-xs font-black text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg shadow-sm cursor-pointer transition-colors flex items-center gap-1.5"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Registrar Presença Provisória Nesta Sala</span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
       <MacroMicroInventoryReportModal
         isOpen={showMacroMicroModal}
         onClose={() => setShowMacroMicroModal(false)}
@@ -2079,6 +2447,15 @@ export const AuditView: React.FC<AuditViewProps> = ({
           initialUnitId={selectedUnitId}
         />
       )}
+
+      {/* Modal de Homologação / OK Oficial da Gestora no ASPEC */}
+      <AspecOfficializationModal
+        isOpen={!!assetToOfficialize}
+        onClose={() => setAssetToOfficialize(null)}
+        asset={assetToOfficialize}
+        currentProfile={currentProfile}
+        onConfirm={handleConfirmOfficialization}
+      />
 
     </div>
   );

@@ -66,12 +66,13 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
   // 2. Bens que foram achados fisicamente nesta sala mas estavam no ASPEC em outro lugar (ou fora do ASPEC)
   const physicalFindingsInRoom = useMemo(() => {
     return assets.filter(a => {
-      const originalSetor = (a.setorNome || '').trim().toLowerCase();
+      const originalSetor = (a.setorOriginalAspec || a.setorNome || '').trim().toLowerCase();
       const setorEncontrado = (a.auditoria?.setorEncontrado || '').trim().toLowerCase();
       // Encontrado aqui, mas não era daqui no ASPEC
       const isFoundHere = setorEncontrado === sectorNameNormalized;
       const isNotOriginalHere = originalSetor !== sectorNameNormalized;
-      return (isFoundHere && isNotOriginalHere) || (a.foraDoAspec && isFoundHere);
+      const isDivergentFoundHere = a.auditoria?.statusDivergencia === 'setor_divergente' && isFoundHere;
+      return (isFoundHere && isNotOriginalHere) || isDivergentFoundHere || (a.foraDoAspec && isFoundHere);
     });
   }, [assets, sectorNameNormalized]);
 
@@ -195,15 +196,21 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
               ${a.numeroSerie ? `<br /><span style="color:#64748b;font-size:8.5px;">S/N: ${a.numeroSerie}</span>` : ''}
             </td>
             <td style="background: #fefce8; color: #854d0e; font-weight: 600;">
-              ${a.foraDoAspec ? 'NÃO CONSTAVA NO ASPEC' : (a.setorNome || 'Outro Setor')}
+              ${a.foraDoAspec && !a.setorOriginalAspec ? 'NÃO CONSTAVA NO ASPEC' : `
+                <div style="font-size:9.5px;color:#78350f;"><strong>No ASPEC a localização é:</strong> ${a.setorOriginalAspec || a.setorNome}</div>
+                <div style="font-size:9.5px;color:#065f46;margin-top:2px;"><strong>No sistema/físico está na sala:</strong> ${sectorName}</div>
+              `}
             </td>
             <td>
-              ${a.foraDoAspec ? `
+              ${a.foraDoAspec && !a.setorOriginalAspec ? `
                 <span class="tag-incluir">[INCLUSÃO CONTÁBIL]</span><br />
                 Cadastrar no ASPEC com carga no <strong>${sectorName}</strong>.
               ` : `
-                <span class="tag-transf">[TRANSFERÊNCIA INTERNA]</span><br />
-                Transferir carga no ASPEC: de "<strong>${a.setorNome}</strong>" ➔ para "<strong>${sectorName}</strong>".
+                <span class="tag-transf">[TRANSFERÊNCIA INTERNA DE CARGA]</span><br />
+                No ASPEC a localização é "<strong>${a.setorOriginalAspec || a.setorNome}</strong>" e no sistema/físico está na sala conferida "<strong>${sectorName}</strong>".<br />
+                ${a.statusRegularizacaoAspec === 'oficializado'
+                  ? '<span style="color:#065f46;font-weight:bold;">✓ Oficializado: Baixa e transferência homologadas pela Gestora com dados unificados.</span>'
+                  : '<span style="color:#b45309;font-weight:bold;">⏳ Localização Provisória: Registro definitivo nesta sala aguarda confirmação de baixa/mudança definitiva no ASPEC pela Gestora (OK Oficial).</span>'}
               `}
             </td>
           </tr>
@@ -315,9 +322,9 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
         `"${a.tombamento}"`,
         `"${a.tomboOrigemSesa || ''}"`,
         `"${a.descricao.replace(/"/g, '""')}"`,
-        `"${a.foraDoAspec ? 'NÃO CONSTAVA NO ASPEC' : a.setorNome}"`,
+        `"${a.foraDoAspec && !a.setorOriginalAspec ? 'NÃO CONSTAVA NO ASPEC' : (a.setorOriginalAspec || a.setorNome)}"`,
         `"${sectorName}"`,
-        `"${a.foraDoAspec ? `Incluir no ASPEC com carga em ${sectorName}` : `Transferir carga no ASPEC de ${a.setorNome} para ${sectorName}`}"`
+        `"${a.foraDoAspec && !a.setorOriginalAspec ? `Incluir no ASPEC com carga em ${sectorName}` : `Transferir carga no ASPEC de ${a.setorOriginalAspec || a.setorNome} para ${sectorName}`}"`
       ]);
     });
 
@@ -485,18 +492,36 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
                             </span>
                           )}
                         </td>
-                        <td className="p-2.5 text-amber-700 dark:text-amber-400 font-semibold">
-                          {a.foraDoAspec ? 'NÃO CONSTAVA NO ASPEC' : a.setorNome}
-                        </td>
                         <td className="p-2.5">
-                          {a.foraDoAspec ? (
-                            <span className="font-semibold text-emerald-700 dark:text-emerald-400">
-                              Inclusão / Cadastro com carga em "{sector.nome}"
+                          {a.foraDoAspec && !a.setorOriginalAspec ? (
+                            <span className="font-semibold text-rose-700 dark:text-rose-400">
+                              NÃO CONSTAVA NO ASPEC
                             </span>
                           ) : (
-                            <span className="font-semibold text-amber-700 dark:text-amber-400">
-                              Transferência Interna no ASPEC: de "{a.setorNome}" ➔ para "{sector.nome}"
+                            <div className="text-xs space-y-0.5">
+                              <div className="text-amber-900 dark:text-amber-200">
+                                <strong>No ASPEC a localização é:</strong> <span className="font-bold underline decoration-amber-500">{a.setorOriginalAspec || a.setorNome}</span>
+                              </div>
+                              <div className="text-emerald-800 dark:text-emerald-300">
+                                <strong>No sistema/físico está na sala conferida:</strong> <span className="font-bold">{sectorName}</span>
+                              </div>
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-2.5">
+                          {a.foraDoAspec && !a.setorOriginalAspec ? (
+                            <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+                              Inclusão / Cadastro com carga em "{sectorName}"
                             </span>
+                          ) : (
+                            <div className="text-xs">
+                              <span className="font-bold text-amber-700 dark:text-amber-400 block">
+                                [TRANSFERÊNCIA INTERNA DE CARGA]
+                              </span>
+                              <span className="text-slate-600 dark:text-slate-300">
+                                No ASPEC a localização é "{a.setorOriginalAspec || a.setorNome}" e no sistema/físico está na sala conferida "{sectorName}".
+                              </span>
+                            </div>
                           )}
                         </td>
                       </tr>

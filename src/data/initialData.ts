@@ -262,7 +262,7 @@ export const CPSMS_SECTORS: Sector[] = [
     unidadeNome: 'Sede Administrativa do CPSMS',
     nome: 'Gerência de Patrimônio e Bens Móveis',
     sigla: 'GER-PAT',
-    responsavelNome: 'Maria Gerliane Rocha Magalhães',
+    responsavelNome: 'Gestora de Patrimônio',
     responsavelCargo: 'Gestora de Patrimônio do CPSMS',
     responsavelMatricula: 'MAT-CPSMS-01',
     subsetores: [
@@ -304,7 +304,7 @@ export const CPSMS_SECTORS: Sector[] = [
 export const AVAILABLE_PROFILES: UserProfile[] = [
   {
     id: 'usr-gestora',
-    nome: 'Maria Gerliane Rocha Magalhães',
+    nome: 'Gestora de Patrimônio',
     cargo: 'Gestora de Patrimônio – CPSMS (Acesso Pleno)',
     role: 'gestora',
     unidadeId: 'sede-cpsms',
@@ -348,9 +348,56 @@ export const AVAILABLE_PROFILES: UserProfile[] = [
   }
 ];
 
-// Clean initial assets list as requested: no invented assets!
-// The system starts pristine, ready for Gerliane to register real assets or import them via CSV/Excel.
-export const INITIAL_ASSETS: Asset[] = [];
+// Lista de bens iniciais com o caso padrão de divergência para testes e demonstração imediata
+export const INITIAL_ASSETS: Asset[] = [
+  {
+    id: 'asset-1847',
+    tombamento: '1847',
+    tomboConsorcio: '1847',
+    origemTombo: 'CPSMS (Próprio do Consórcio)',
+    formaAquisicao: 'Compra / Pregão Eletrônico',
+    orgao: 'Consórcio Público de Saúde da Microrregião de Sobral (CPSMS)',
+    descricao: 'Negatoscópio de 02 Corpos / Aparelho de Diagnóstico Clínico',
+    unidadeId: 'policlinica',
+    unidadeNome: 'Policlínica Regional Bernardo Félix da Silva',
+    area: 'Bloco de Consultórios Médicos Especializados',
+    subarea: 'Consultório 01 – Clínica Médica',
+    setorId: 'poli-consultorios',
+    setorNome: 'Clínica Médica (Consultórios Especializados)',
+    subsetorNome: 'Consultório 01 – Clínica Médica',
+    setorOriginalAspec: 'Clínica Médica (Consultórios Especializados)',
+    unidadeOriginalAspec: 'Policlínica Regional Bernardo Félix da Silva',
+    responsavelNome: 'Dra. Helena Carneiro',
+    responsavelCargo: 'Coordenadora Clínica',
+    responsavelMatricula: 'CPSMS-2019',
+    categoria: 'Equipamentos Médicos & Odontológicos',
+    estado: 'Bom',
+    valorAquisicao: 2850.00,
+    valorResidual: 1950.00,
+    dataAquisicao: '2023-04-15',
+    dataTombamento: '2023-04-20',
+    notaFiscal: 'NF-8921',
+    fornecedor: 'Hospitalar Med Equipamentos Ltda',
+    numeroSerie: 'SN-1847-RAD',
+    statusRegularizacaoAspec: 'provisorio',
+    observacoes: 'Bem físico localizado na Radiologia. Registrado no ASPEC na Clínica. Aguardando baixa definitiva no ASPEC pela Gestora.',
+    auditoria: {
+      conferido: true,
+      dataConferencia: '2026-03-20 09:30',
+      responsavelConferencia: 'Comissão de Inventário',
+      statusDivergencia: 'setor_divergente',
+      statusRegularizacaoAspec: 'provisorio',
+      unidadeEncontrada: 'Policlínica Regional Bernardo Félix da Silva',
+      setorEncontrado: 'Radiologia e Diagnóstico por Imagem',
+      subsetorEncontrado: 'Sala de Raio-X Digital',
+      setorOriginalAspec: 'Clínica Médica (Consultórios Especializados)',
+      unidadeOriginalAspec: 'Policlínica Regional Bernardo Félix da Silva',
+      divergenciaConfirmada: true,
+      gestoraConfirmouAspec: false,
+      observacaoAuditoria: '[LOCALIZAÇÃO PROVISÓRIA NO CADERNO DE BALANÇO] Bem localizado fisicamente na Radiologia, porém registrado no sistema ASPEC na Clínica. Aguardando confirmação de baixa/mudança definitiva no sistema ASPEC pela Gestora.'
+    }
+  }
+];
 
 // Clean initial transfer requests
 export const INITIAL_TRANSFERS: TransferRequest[] = [];
