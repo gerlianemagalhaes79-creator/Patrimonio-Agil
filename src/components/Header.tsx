@@ -9,7 +9,8 @@ import {
   CheckSquare,
   FileText,
   ShieldAlert,
-  Scale
+  Scale,
+  Map
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -32,6 +33,11 @@ const TAB_INFO: Record<NavTab, { title: string; subtitle: string; icon: React.El
     title: 'Bens Patrimoniais',
     subtitle: 'Inventário geral, busca analítica e filtros por unidade',
     icon: Package,
+  },
+  map: {
+    title: 'Mapa Visual das Unidades',
+    subtitle: 'Navegação visual sala a sala, acompanhamento em tempo real e conclusão de setores',
+    icon: Map,
   },
   transfers: {
     title: 'Transferências de Carga',

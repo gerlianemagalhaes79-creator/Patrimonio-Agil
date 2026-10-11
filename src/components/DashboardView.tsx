@@ -1,6 +1,7 @@
 import React from 'react';
 import { Asset, Sector, UnitInfo, TransferRequest, UserProfile, TomboOrigin } from '../types';
 import { formatBRL } from '../utils/formatters';
+import { NavTab } from './BottomNavigation';
 import { 
   Package, 
   ArrowLeftRight, 
@@ -20,7 +21,8 @@ import {
   Stethoscope, 
   Smile,
   ShieldAlert,
-  ClipboardList
+  ClipboardList,
+  Map
 } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -29,7 +31,7 @@ interface DashboardViewProps {
   units: UnitInfo[];
   transfers: TransferRequest[];
   currentProfile: UserProfile;
-  onNavigateTab: (tab: 'dashboard' | 'assets' | 'transfers' | 'audit' | 'terms' | 'norms' | 'saneamento') => void;
+  onNavigateTab: (tab: NavTab) => void;
   onSelectUnitFilter: (unitId: string) => void;
   onOpenNewTransfer: () => void;
   onOpenNewAsset: () => void;
@@ -409,15 +411,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 Carga patrimonial da Policlínica Bernardo Félix e do CEO
               </p>
             </div>
-            <button
-              onClick={() => {
-                onSelectUnitFilter('all');
-                onNavigateTab('assets');
-              }}
-              className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:underline min-h-[44px] flex items-center"
-            >
-              Ver acervo
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => onNavigateTab('map')}
+                className="text-xs font-bold text-slate-950 bg-emerald-400 hover:bg-emerald-300 px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs cursor-pointer transition-colors"
+                title="Abrir mapa visual interativo e acompanhamento sala a sala"
+              >
+                <Map className="w-3.5 h-3.5" />
+                <span>Mapa 360° das Unidades</span>
+              </button>
+              <button
+                onClick={() => {
+                  onSelectUnitFilter('all');
+                  onNavigateTab('assets');
+                }}
+                className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:underline min-h-[36px] flex items-center"
+              >
+                Ver acervo
+              </button>
+            </div>
           </div>
 
           <div className="space-y-3">

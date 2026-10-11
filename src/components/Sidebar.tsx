@@ -19,7 +19,8 @@ import {
   ChevronDown, 
   Layers, 
   Cloud,
-  X
+  X,
+  Map
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -69,6 +70,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badge: null,
       icon: LayoutDashboard,
       iconColor: 'text-emerald-600',
+    },
+    {
+      id: 'map' as NavTab,
+      label: 'Mapa das Unidades',
+      badge: 'Visual 360°',
+      badgeStyle: 'neutral',
+      icon: Map,
+      iconColor: 'text-emerald-500',
     },
     {
       id: 'assets' as NavTab,

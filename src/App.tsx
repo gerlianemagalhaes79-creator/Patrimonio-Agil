@@ -53,10 +53,24 @@ import { NewTransferModal } from './components/NewTransferModal';
 import { NewAssetModal } from './components/NewAssetModal';
 import { DataExchangeModal } from './components/DataExchangeModal';
 import { SmartImportModal } from './components/SmartImportModal';
+import { UnitsInteractiveMap } from './components/UnitsInteractiveMap';
 
 export default function App() {
   const [assets, setAssets] = useState<Asset[]>([]);
-  const [sectors] = useState<Sector[]>(CPSMS_SECTORS);
+  const [sectors, setSectors] = useState<Sector[]>(() => {
+    try {
+      const saved = localStorage.getItem('cpsms_custom_sectors');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Error reading custom sectors from localStorage:', e);
+    }
+    return CPSMS_SECTORS;
+  });
   const [units] = useState<UnitInfo[]>(CPSMS_UNITS);
   const [transfers, setTransfers] = useState<TransferRequest[]>([]);
   const [terms, setTerms] = useState<ResponsibilityTerm[]>([]);
@@ -113,7 +127,7 @@ export default function App() {
           loadTermsFromDB()
         ]);
         let effectiveAssets = loadedAssets;
-        if ((!effectiveAssets || effectiveAssets.length === 0) && INITIAL_ASSETS.length > 0) {
+        if ((!effectiveAssets || effectiveAssets.length <= 1) && INITIAL_ASSETS.length > 1) {
           effectiveAssets = INITIAL_ASSETS;
           saveAssetsToDB(INITIAL_ASSETS).catch(console.warn);
         }
@@ -444,6 +458,92 @@ export default function App() {
     setIsProcessing(false);
   };
 
+  const handleAddNewLocation = (newSector: Sector) => {
+    setSectors(prev => {
+      const exists = prev.some(s => s.id === newSector.id || s.nome.trim().toLowerCase() === newSector.nome.trim().toLowerCase());
+      let updated: Sector[];
+      if (exists) {
+        updated = prev.map(s => (s.id === newSector.id || s.nome.trim().toLowerCase() === newSector.nome.trim().toLowerCase()) ? newSector : s);
+      } else {
+        updated = [...prev, newSector];
+      }
+      try {
+        localStorage.setItem('cpsms_custom_sectors', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Failed to save sectors to localStorage:', e);
+      }
+      return updated;
+    });
+  };
+
+  const handleConcludeRoom = (sectorIdOrName: string) => {
+    const t0 = performance.now();
+    setIsProcessing(true);
+
+    const targetSector = sectors.find(s => 
+      s.id === sectorIdOrName || 
+      s.nome.trim().toLowerCase() === sectorIdOrName.trim().toLowerCase()
+    );
+
+    const sectorName = targetSector ? targetSector.nome : sectorIdOrName;
+    const sectorNameLower = sectorName.trim().toLowerCase();
+
+    // 1. Mark sector as reviewed
+    setSectors(prev => {
+      const updated = prev.map(s => {
+        if (s.id === sectorIdOrName || s.nome.trim().toLowerCase() === sectorNameLower) {
+          return {
+            ...s,
+            revisada: true,
+            dataRevisao: new Date().toISOString(),
+            responsavelRevisao: currentProfile.nome,
+          };
+        }
+        return s;
+      });
+      try {
+        localStorage.setItem('cpsms_custom_sectors', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Failed to save sectors to localStorage:', e);
+      }
+      return updated;
+    });
+
+    // 2. Consolidate and mark checked all assets in this sector
+    const updatedAssets = assets.map(a => {
+      const aSetor = (a.setorNome || '').trim().toLowerCase();
+      const aEncontrado = (a.auditoria?.setorEncontrado || '').trim().toLowerCase();
+      const aOrig = (a.setorOriginalAspec || '').trim().toLowerCase();
+      const aId = a.setorId;
+
+      if (aSetor === sectorNameLower || aEncontrado === sectorNameLower || aOrig === sectorNameLower || (targetSector && aId === targetSector.id)) {
+        const audited: Asset = {
+          ...a,
+          auditoria: {
+            ...a.auditoria,
+            conferido: true,
+            dataConferencia: a.auditoria?.dataConferencia || new Date().toISOString(),
+            responsavelConferencia: a.auditoria?.responsavelConferencia || currentProfile.nome,
+            observacaoAuditoria: a.auditoria?.observacaoAuditoria || 'Sala concluída e conferida no inventário físico',
+            statusDivergencia: a.auditoria?.statusDivergencia || 'conforme',
+            setorEncontrado: sectorName,
+            unidadeEncontrada: targetSector?.unidadeNome || a.unidadeNome,
+          }
+        };
+        saveAssetToFirestore(audited).catch(e => console.warn('Firestore err:', e));
+        return audited;
+      }
+      return a;
+    });
+
+    setAssets(updatedAssets);
+    saveAssetsToDB(updatedAssets).catch(e => console.warn('IndexedDB err:', e));
+
+    const dur = Math.max(5, Math.round(performance.now() - t0));
+    setLastQueryDurationMs(dur);
+    setIsProcessing(false);
+  };
+
   const handleClearAllData = async () => {
     await clearAllDB();
     setAssets([]);
@@ -603,6 +703,21 @@ export default function App() {
           />
         )}
 
+        {activeTab === 'map' && (
+          <UnitsInteractiveMap
+            assets={assets}
+            sectors={sectors}
+            units={units}
+            currentProfile={currentProfile}
+            onNavigateToAuditRoom={(unitId, sectorName) => {
+              setAuditTarget({ unitId, roomName: sectorName });
+              setActiveTab('audit');
+            }}
+            onConcludeRoom={handleConcludeRoom}
+            onAddNewLocation={handleAddNewLocation}
+          />
+        )}
+
         {activeTab === 'assets' && (
           <AssetsView
             assets={assets}
@@ -659,6 +774,7 @@ export default function App() {
             onUpdateAsset={handleUpdateAsset}
             onConsolidateRoom={handleConsolidateRoomOfficial}
             onRecordQueryDuration={(dur) => setLastQueryDurationMs(Math.max(1, Math.round(dur)))}
+            onConcludeRoom={handleConcludeRoom}
           />
         )}
 

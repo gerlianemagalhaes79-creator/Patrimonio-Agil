@@ -31,7 +31,8 @@ import {
   Sparkles,
   Lightbulb,
   FileText,
-  ShieldAlert
+  ShieldAlert,
+  CheckCheck
 } from 'lucide-react';
 import { MacroMicroInventoryReportModal } from './MacroMicroInventoryReportModal';
 import { AspecReconciliationModal } from './AspecReconciliationModal';
@@ -69,6 +70,7 @@ interface AuditViewProps {
   onUpdateAsset?: (asset: Asset) => void;
   onConsolidateRoom?: (sectorName: string, protocolo: string, parecer: string) => void;
   onRecordQueryDuration?: (durationMs: number) => void;
+  onConcludeRoom?: (sectorIdOrName: string) => void;
 }
 
 export const AuditView: React.FC<AuditViewProps> = ({
@@ -84,6 +86,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
   onUpdateAsset,
   onConsolidateRoom,
   onRecordQueryDuration,
+  onConcludeRoom,
 }) => {
   // Tab: Default is 'salas' (Salas & Setores - exactly as requested: no camera / QR code blocking on open!)
   const [activeTab, setActiveTab] = useState<'salas' | 'divergencias' | 'conciliacao' | 'relatorio' | 'scanner'>('salas');
@@ -241,7 +244,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
     });
 
     // Collect any distinct sector / room names found in defined sectors and unit assets
-    const sectorMap = new Map<string, { id: string; nome: string; responsavel?: string }>();
+    const sectorMap = new Map<string, { id: string; nome: string; responsavel?: string; revisada?: boolean }>();
     const usedIds = new Set<string>();
 
     definedSectors.forEach(s => {
@@ -255,7 +258,8 @@ export const AuditView: React.FC<AuditViewProps> = ({
       sectorMap.set(key, {
         id: uniqueSecId,
         nome: s.nome,
-        responsavel: s.responsavelNome
+        responsavel: s.responsavelNome,
+        revisada: s.revisada,
       });
     });
 
@@ -282,7 +286,8 @@ export const AuditView: React.FC<AuditViewProps> = ({
         sectorMap.set(key, {
           id: uniqueId,
           nome: sNome,
-          responsavel: a.responsavelNome
+          responsavel: a.responsavelNome,
+          revisada: false,
         });
       }
     });
@@ -304,7 +309,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
         checkedCount,
         pendingCount: secAssets.length - checkedCount,
         totalVal,
-        percent: secAssets.length > 0 ? Math.round((checkedCount / secAssets.length) * 100) : 0
+        percent: secAssets.length > 0 ? Math.round((checkedCount / secAssets.length) * 100) : (sec.revisada ? 100 : 0)
       };
     });
 
@@ -1578,6 +1583,33 @@ export const AuditView: React.FC<AuditViewProps> = ({
 
                 {/* Top Action Buttons for this Room */}
                 <div className="flex items-center gap-2 flex-wrap">
+                  {/* FUNÇÃO OBRIGATÓRIA: CONCLUIR SALA */}
+                  {!activeSector?.revisada ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (activeSector) {
+                          if (onConcludeRoom) {
+                            onConcludeRoom(activeSector.id || activeSector.nome);
+                          }
+                          handleConfirmAllInSector();
+                          setBulkFeedback(`Sucesso! A sala "${activeSector.nome}" foi marcada como revisada. Todos os itens foram consolidados e o status visual do Mapa Geral foi atualizado!`);
+                          setTimeout(() => setBulkFeedback(null), 6000);
+                        }
+                      }}
+                      className="flex items-center gap-1.5 px-4 py-2 text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-lg transition-all cursor-pointer min-h-[38px] shadow-md ring-2 ring-emerald-500/40"
+                      title="Concluir sala atual: marcar como revisada no sistema, consolidar todos os itens verificados e atualizar o mapa visual geral das unidades"
+                    >
+                      <CheckCheck className="w-4 h-4 stroke-[3]" />
+                      <span>Concluir Sala</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1.5 px-3 py-2 text-xs font-black bg-emerald-100 dark:bg-emerald-950/80 text-emerald-900 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700 rounded-lg min-h-[38px]">
+                      <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                      <span>Sala Revisada no Mapa</span>
+                    </div>
+                  )}
+
                   {/* Salvar Alterações da Sala (Abre Comparativo Lado a Lado: ASPEC vs Físico) */}
                   <button
                     type="button"
@@ -1593,11 +1625,11 @@ export const AuditView: React.FC<AuditViewProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowRoomAspecModal(true)}
-                    className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-lg transition-all cursor-pointer min-h-[38px] shadow-sm ring-2 ring-emerald-500/30"
+                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-lg transition-all cursor-pointer min-h-[38px]"
                     title="Concluir conferência desta sala e gerar o Termo Oficial com os ajustes exclusivos do ASPEC desta localização"
                   >
-                    <FileText className="w-4 h-4 text-slate-950" />
-                    <span>Concluir Sala & Termo ASPEC</span>
+                    <FileText className="w-4 h-4 text-slate-600 dark:text-slate-400" />
+                    <span>Termo ASPEC</span>
                   </button>
 
                   {/* Add Untracked Asset Right in this Room */}

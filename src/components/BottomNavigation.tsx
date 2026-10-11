@@ -1,7 +1,7 @@
 import React from 'react';
-import { LayoutDashboard, Package, ArrowLeftRight, QrCode, FileText, Scale, ShieldAlert } from 'lucide-react';
+import { LayoutDashboard, Package, ArrowLeftRight, QrCode, FileText, Scale, ShieldAlert, Map } from 'lucide-react';
 
-export type NavTab = 'dashboard' | 'assets' | 'transfers' | 'audit' | 'terms' | 'norms' | 'saneamento';
+export type NavTab = 'dashboard' | 'assets' | 'map' | 'audit' | 'transfers' | 'terms' | 'norms' | 'saneamento';
 
 interface BottomNavigationProps {
   activeTab: NavTab;
@@ -21,20 +21,25 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
       icon: LayoutDashboard,
     },
     {
+      id: 'map' as NavTab,
+      label: 'Mapa',
+      icon: Map,
+    },
+    {
       id: 'assets' as NavTab,
       label: 'Bens',
       icon: Package,
+    },
+    {
+      id: 'audit' as NavTab,
+      label: 'Vistoria',
+      icon: QrCode,
     },
     {
       id: 'transfers' as NavTab,
       label: 'Trocas',
       icon: ArrowLeftRight,
       badge: pendingTransfersCount > 0 ? pendingTransfersCount : undefined,
-    },
-    {
-      id: 'audit' as NavTab,
-      label: 'Auditoria',
-      icon: QrCode,
     },
     {
       id: 'terms' as NavTab,
@@ -45,11 +50,6 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
       id: 'saneamento' as NavTab,
       label: 'Saneamento',
       icon: ShieldAlert,
-    },
-    {
-      id: 'norms' as NavTab,
-      label: 'Normas',
-      icon: Scale,
     },
   ];
 

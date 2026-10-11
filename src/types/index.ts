@@ -126,13 +126,18 @@ export interface SubSector {
 
 export interface Sector {
   id: string;
-  unidadeId: 'policlinica' | 'ceo' | 'sede-cpsms' | 'cer';
+  unidadeId: string;
   unidadeNome: string;
   nome: string;
   sigla: string;
   responsavelNome: string;
   responsavelCargo: string;
   responsavelMatricula: string;
+  bloco?: string; // Prédio / Bloco (ex: Bloco A - Ambulatórios, Bloco B - Imagem)
+  andar?: string; // Pavimento / Andar
+  revisada?: boolean; // Se a sala foi concluída e revisada no inventário
+  dataRevisao?: string;
+  responsavelRevisao?: string;
   subsetores: SubSector[];
 }
 
