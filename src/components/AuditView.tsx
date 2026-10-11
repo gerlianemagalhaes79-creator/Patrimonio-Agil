@@ -32,7 +32,12 @@ import {
   Lightbulb,
   FileText,
   ShieldAlert,
-  CheckCheck
+  CheckCheck,
+  Barcode,
+  LayoutGrid,
+  List,
+  ChevronDown,
+  CheckSquare
 } from 'lucide-react';
 import { MacroMicroInventoryReportModal } from './MacroMicroInventoryReportModal';
 import { AspecReconciliationModal } from './AspecReconciliationModal';
@@ -147,8 +152,15 @@ export const AuditView: React.FC<AuditViewProps> = ({
   const [roomAssetSearchQuery, setRoomAssetSearchQuery] = useState('');
   const [roomStatusFilter, setRoomStatusFilter] = useState<'todos' | 'pendentes' | 'conferidos' | 'divergentes'>('todos');
 
-  // Room Print Sheet Modal
-  const [showRoomPrintSheet, setShowRoomPrintSheet] = useState(false);
+  // Room inspection ergonomic settings
+  const [inspectionLayout, setInspectionLayout] = useState<'ergonomic' | 'compact'>('ergonomic');
+  const [showRoomExtraDocsMenu, setShowRoomExtraDocsMenu] = useState(false);
+  const [lastScannedFeedback, setLastScannedFeedback] = useState<{
+    type: 'success' | 'warning' | 'info';
+    tombo: string;
+    nome: string;
+    detalhes?: string;
+  } | null>(null);
   const [bulkFeedback, setBulkFeedback] = useState<string | null>(null);
 
   // Quick Modal: Add Untracked Asset while inside this specific room
@@ -393,6 +405,13 @@ export const AuditView: React.FC<AuditViewProps> = ({
       responsavelConferencia: currentProfile.nome
     });
     markRoomAsDraft(activeSector?.nome);
+    setLastScannedFeedback({
+      type: 'success',
+      tombo: asset.tombamento,
+      nome: asset.descricao,
+      detalhes: `Conferido em ${activeSector?.nome || 'sala'} por ${currentProfile.nome}`
+    });
+    setTimeout(() => setLastScannedFeedback(null), 6000);
   };
 
   // Quick Action: Mark Missing / Divergence
@@ -917,11 +936,13 @@ export const AuditView: React.FC<AuditViewProps> = ({
     if (matchedSectorLower === currentSectorLower) {
       // Belongs to this room already!
       handleQuickConfirm(matched);
+      setForeignTomboInput('');
       setForeignTomboFeedback({
         type: 'belongs_here',
         asset: matched,
-        message: `O Tombo ${matched.tombamento} (${matched.descricao}) já pertence a esta sala no ASPEC! Presença confirmada.`
+        message: `O Tombo ${matched.tombamento} (${matched.descricao}) já pertence a esta sala no ASPEC! Presença confirmada no sistema.`
       });
+      setTimeout(() => setForeignTomboFeedback(null), 5000);
     } else {
       // Belongs to another room in ASPEC! Remanejamento detectado!
       setPendingDivergenceConfirmation({
@@ -1554,35 +1575,52 @@ export const AuditView: React.FC<AuditViewProps> = ({
             </div>
           ) : (
             /* STEP 3: INSIDE SELECTED SECTOR - SHOWS EVERYTHING IN THE ROOM! */
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-5 shadow-xs">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-7 space-y-6 shadow-sm">
               
               {/* Sector Header with Breadcrumb and Actions */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
-                <div className="space-y-1">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
+                <div className="space-y-1.5">
                   <button
                     type="button"
                     onClick={() => setSelectedSectorId(null)}
-                    className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer mb-1"
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer mb-0.5"
                   >
-                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <ArrowLeft className="w-4 h-4" />
                     <span>Voltar à lista de salas de {activeUnitInfo.sigla}</span>
                   </button>
 
-                  <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
-                    <MapPin className="w-5 h-5 text-emerald-500 shrink-0" />
-                    <span>{activeSector?.nome}</span>
-                  </h3>
-                  <div className="text-xs text-slate-500 flex items-center gap-2 flex-wrap">
-                    <span>Unidade: <strong>{activeUnitInfo.nome}</strong></span>
-                    {activeSector?.responsavel && (
-                      <span>· Responsável: <strong>{activeSector.responsavel}</strong></span>
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <h3 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2.5">
+                      <div className="p-2 rounded-xl bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300">
+                        <MapPin className="w-6 h-6 shrink-0" />
+                      </div>
+                      <span>{activeSector?.nome}</span>
+                    </h3>
+
+                    {activeSector?.revisada ? (
+                      <span className="px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-500 text-slate-950 flex items-center gap-1.5 shadow-sm">
+                        <CheckCheck className="w-3.5 h-3.5 stroke-[3]" />
+                        <span>Revisada no Mapa</span>
+                      </span>
+                    ) : (
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 border border-amber-300 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>Em Vistoria Física</span>
+                      </span>
                     )}
-                    <span>· Valor alocado: <strong>{formatBRL(activeSector?.totalVal || 0)}</strong></span>
+                  </div>
+
+                  <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-3 flex-wrap pt-0.5">
+                    <span>Unidade: <strong className="text-slate-700 dark:text-slate-200">{activeUnitInfo.nome}</strong></span>
+                    {activeSector?.responsavel && (
+                      <span>· Responsável: <strong className="text-slate-700 dark:text-slate-200">{activeSector.responsavel}</strong></span>
+                    )}
+                    <span>· Valor alocado no ASPEC: <strong className="text-slate-700 dark:text-slate-200 font-mono">{formatBRL(activeSector?.totalVal || 0)}</strong></span>
                   </div>
                 </div>
 
                 {/* Top Action Buttons for this Room */}
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-2.5 flex-wrap">
                   {/* FUNÇÃO OBRIGATÓRIA: CONCLUIR SALA */}
                   {!activeSector?.revisada ? (
                     <button
@@ -1597,39 +1635,39 @@ export const AuditView: React.FC<AuditViewProps> = ({
                           setTimeout(() => setBulkFeedback(null), 6000);
                         }
                       }}
-                      className="flex items-center gap-1.5 px-4 py-2 text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-lg transition-all cursor-pointer min-h-[38px] shadow-md ring-2 ring-emerald-500/40"
+                      className="flex items-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-black bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl transition-all cursor-pointer shadow-md ring-2 ring-emerald-500/40 hover:scale-[1.02] active:scale-[0.98]"
                       title="Concluir sala atual: marcar como revisada no sistema, consolidar todos os itens verificados e atualizar o mapa visual geral das unidades"
                     >
                       <CheckCheck className="w-4 h-4 stroke-[3]" />
                       <span>Concluir Sala</span>
                     </button>
                   ) : (
-                    <div className="flex items-center gap-1.5 px-3 py-2 text-xs font-black bg-emerald-100 dark:bg-emerald-950/80 text-emerald-900 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700 rounded-lg min-h-[38px]">
+                    <div className="flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-black bg-emerald-100 dark:bg-emerald-950/80 text-emerald-900 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700 rounded-xl">
                       <ShieldCheck className="w-4 h-4 text-emerald-600" />
                       <span>Sala Revisada no Mapa</span>
                     </div>
                   )}
 
+                  {/* Confirm All In Room */}
+                  <button
+                    type="button"
+                    onClick={handleConfirmAllInSector}
+                    className="flex items-center gap-1.5 px-4 py-2.5 text-xs sm:text-sm font-bold bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl transition-all cursor-pointer shadow-xs"
+                    title="Confirmar presença de todos os bens pendentes desta sala com 1 clique"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Confirmar Todos</span>
+                  </button>
+
                   {/* Salvar Alterações da Sala (Abre Comparativo Lado a Lado: ASPEC vs Físico) */}
                   <button
                     type="button"
                     onClick={() => handleSaveRoomChanges(activeSector)}
-                    className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-black bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-all cursor-pointer min-h-[38px] shadow-sm ring-2 ring-blue-500/30"
+                    className="flex items-center gap-1.5 px-4 py-2.5 text-xs sm:text-sm font-bold bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all cursor-pointer shadow-xs ring-2 ring-blue-500/20"
                     title="Salvar alterações físicas da sala em rascunho de conferência e exibir versões comparativas lado a lado: 'Sala de acordo com o ASPEC' e 'Sala atualizada fisicamente'"
                   >
                     <Layers className="w-4 h-4 text-white" />
-                    <span>Salvar Alterações (Comparar com ASPEC)</span>
-                  </button>
-
-                  {/* Concluir Sala & Gerar Termo ASPEC */}
-                  <button
-                    type="button"
-                    onClick={() => setShowRoomAspecModal(true)}
-                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-lg transition-all cursor-pointer min-h-[38px]"
-                    title="Concluir conferência desta sala e gerar o Termo Oficial com os ajustes exclusivos do ASPEC desta localização"
-                  >
-                    <FileText className="w-4 h-4 text-slate-600 dark:text-slate-400" />
-                    <span>Termo ASPEC</span>
+                    <span>Salvar (Comparar ASPEC)</span>
                   </button>
 
                   {/* Add Untracked Asset Right in this Room */}
@@ -1642,63 +1680,136 @@ export const AuditView: React.FC<AuditViewProps> = ({
                       setRoomNewSemPlaqueta(false);
                       setShowAddRoomAssetModal(true);
                     }}
-                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg transition-colors cursor-pointer min-h-[38px] shadow-xs"
+                    className="flex items-center gap-1.5 px-3.5 py-2.5 text-xs sm:text-sm font-bold bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-xl transition-colors cursor-pointer shadow-xs"
                     title="Cadastrar bem físico encontrado nesta sala que não está no ASPEC"
                   >
                     <Plus className="w-4 h-4 text-slate-950" />
                     <span>+ Bem Fora do ASPEC</span>
                   </button>
 
-                  {/* Confirm All In Room */}
-                  <button
-                    type="button"
-                    onClick={handleConfirmAllInSector}
-                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors cursor-pointer min-h-[38px] shadow-xs"
-                    title="Confirmar presença de todos os bens desta sala com 1 clique"
-                  >
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>Confirmar Todos da Sala</span>
-                  </button>
+                  {/* Documents & Reports Dropdown Menu */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowRoomExtraDocsMenu(!showRoomExtraDocsMenu)}
+                      className="flex items-center gap-1.5 px-3.5 py-2.5 text-xs sm:text-sm font-semibold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-xl transition-colors cursor-pointer"
+                    >
+                      <FileText className="w-4 h-4 text-slate-500" />
+                      <span>Documentos & Termos</span>
+                      <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                    </button>
 
-                  {/* Print Room Sheet */}
-                  <button
-                    type="button"
-                    onClick={handlePrintRoomSheet}
-                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer min-h-[38px]"
-                    title="Imprimir folha de conferência da sala (A4 / PDF)"
-                  >
-                    <Printer className="w-4 h-4 text-emerald-400" />
-                    <span>Imprimir Folha da Sala</span>
-                  </button>
+                    {showRoomExtraDocsMenu && (
+                      <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-850 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl p-2 z-30 space-y-1 text-xs animate-in fade-in duration-150">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowRoomAspecModal(true);
+                            setShowRoomExtraDocsMenu(false);
+                          }}
+                          className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2 text-slate-800 dark:text-slate-200"
+                        >
+                          <FileText className="w-4 h-4 text-blue-500" />
+                          <span>Termo ASPEC da Sala</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handlePrintRoomSheet();
+                            setShowRoomExtraDocsMenu(false);
+                          }}
+                          className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2 text-slate-800 dark:text-slate-200"
+                        >
+                          <Printer className="w-4 h-4 text-emerald-500" />
+                          <span>Imprimir Folha da Sala (A4)</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleDownloadRoomSheetHtml();
+                            setShowRoomExtraDocsMenu(false);
+                          }}
+                          className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2 text-slate-800 dark:text-slate-200"
+                        >
+                          <FileCode className="w-4 h-4 text-indigo-500" />
+                          <span>Baixar Folha em HTML</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowMacroMicroModal(true);
+                            setShowRoomExtraDocsMenu(false);
+                          }}
+                          className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2 text-slate-800 dark:text-slate-200"
+                        >
+                          <ClipboardList className="w-4 h-4 text-amber-500" />
+                          <span>Caderno Balanço Geral</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
 
-                  <button
-                    type="button"
-                    onClick={handleDownloadRoomSheetHtml}
-                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-900 dark:bg-indigo-950/70 dark:text-indigo-200 border border-indigo-200 dark:border-indigo-800 rounded-lg transition-colors cursor-pointer min-h-[38px]"
-                    title="Baixar arquivo HTML da folha da sala para abrir no navegador e imprimir diretamente (Ctrl+P)"
-                  >
-                    <FileCode className="w-4 h-4 text-indigo-500" />
-                    <span className="hidden sm:inline">Baixar HTML</span>
-                  </button>
+              {/* ROOM PROGRESS & STATS BANNER */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">Total de Bens</span>
+                  <div className="flex items-baseline gap-2 mt-1">
+                    <span className="text-2xl font-black text-slate-900 dark:text-white font-mono">
+                      {activeSector?.assetsCount || 0}
+                    </span>
+                    <span className="text-xs text-slate-400">itens</span>
+                  </div>
+                  <span className="text-[11px] text-slate-400 font-mono mt-0.5 block">{formatBRL(activeSector?.totalVal || 0)}</span>
+                </div>
 
-                  {/* Caderno Balanço Macro ➔ Micro */}
-                  <button
-                    type="button"
-                    onClick={() => setShowMacroMicroModal(true)}
-                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 rounded-lg transition-colors cursor-pointer min-h-[38px] shadow-2xs"
-                    title="Abrir Caderno de Balanço Macro e Micro com campos para itens fora do ASPEC"
-                  >
-                    <ClipboardList className="w-4 h-4 text-emerald-500" />
-                    <span>Caderno Balanço Geral</span>
-                  </button>
+                <div className="p-4 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 block">Conferidos / Presentes</span>
+                  <div className="flex items-baseline gap-2 mt-1">
+                    <span className="text-2xl font-black text-emerald-700 dark:text-emerald-300 font-mono">
+                      {activeSector?.checkedCount || 0}
+                    </span>
+                    <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                      ({activeSector?.percent || 0}%)
+                    </span>
+                  </div>
+                  <div className="w-full bg-emerald-200 dark:bg-emerald-900 h-2 rounded-full overflow-hidden mt-1.5">
+                    <div 
+                      className="bg-emerald-500 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${activeSector?.percent || 0}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300 block">Pendentes de Aferição</span>
+                  <div className="flex items-baseline gap-2 mt-1">
+                    <span className="text-2xl font-black text-amber-700 dark:text-amber-300 font-mono">
+                      {activeSector?.pendingCount || 0}
+                    </span>
+                    <span className="text-xs text-amber-600 dark:text-amber-400">restantes</span>
+                  </div>
+                  <span className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5 block">Aguardando conferência física in loco</span>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-rose-50/70 dark:bg-rose-950/30 border border-rose-300 dark:border-rose-800">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-rose-800 dark:text-rose-300 block">Divergências / Achados</span>
+                  <div className="flex items-baseline gap-2 mt-1">
+                    <span className="text-2xl font-black text-rose-700 dark:text-rose-300 font-mono">
+                      {activeSectorAssets.filter(a => a.auditoria?.statusDivergencia === 'setor_divergente' || a.auditoria?.statusDivergencia === 'nao_encontrado' || a.foraDoAspec).length}
+                    </span>
+                    <span className="text-xs text-rose-600 dark:text-rose-400">registros</span>
+                  </div>
+                  <span className="text-[11px] text-rose-700 dark:text-rose-400 mt-0.5 block">Não vistos ou fora do ASPEC</span>
                 </div>
               </div>
 
               {/* Feedback banner após salvar / consolidar */}
               {roomSaveFeedback && (
-                <div className="p-3 bg-emerald-100 dark:bg-emerald-950 text-emerald-900 dark:text-emerald-100 rounded-xl border border-emerald-300 text-xs font-bold flex items-center justify-between gap-2 animate-in fade-in">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <div className="p-4 bg-emerald-100 dark:bg-emerald-950 text-emerald-900 dark:text-emerald-100 rounded-2xl border border-emerald-300 text-sm font-bold flex items-center justify-between gap-3 animate-in fade-in">
+                  <div className="flex items-center gap-2.5">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
                     <span>{roomSaveFeedback}</span>
                   </div>
                   <button onClick={() => setRoomSaveFeedback(null)} className="text-emerald-700 hover:text-emerald-900 font-mono text-xs">✕</button>
@@ -1707,13 +1818,13 @@ export const AuditView: React.FC<AuditViewProps> = ({
 
               {/* Status da Sala: Rascunho de Conferência Ativo vs Consolidado Definitivo */}
               {activeSector && roomDrafts[activeSector.nome] ? (
-                <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-xl border-2 border-amber-400 dark:border-amber-700 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
-                  <div className="flex items-start sm:items-center gap-2.5">
-                    <div className="p-1.5 bg-amber-400 text-amber-950 rounded-lg font-black text-[10px] uppercase font-mono shrink-0">
-                      Rascunho de Conferência
+                <div className="p-4 bg-amber-50 dark:bg-amber-950/40 rounded-2xl border-2 border-amber-400 dark:border-amber-700 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
+                  <div className="flex items-start sm:items-center gap-3">
+                    <div className="p-2 bg-amber-400 text-amber-950 rounded-xl font-black text-[11px] uppercase font-mono shrink-0 shadow-xs">
+                      Rascunho Ativo
                     </div>
-                    <div className="leading-tight text-amber-950 dark:text-amber-200">
-                      <strong>Esta sala possui alterações salvas em rascunho de conferência.</strong>
+                    <div className="leading-snug text-amber-950 dark:text-amber-200">
+                      <strong className="text-sm">Esta sala possui alterações salvas em rascunho de conferência física.</strong>
                       <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5">
                         Somente após a gestora dar o comando de confirmação de que o ASPEC foi atualizado oficialmente é que os dados serão consolidados como definitivos no sistema, excluindo este rascunho temporário.
                       </p>
@@ -1726,16 +1837,16 @@ export const AuditView: React.FC<AuditViewProps> = ({
                         setActiveComparingSector(activeSector);
                         setShowRoomComparisonModal(true);
                       }}
-                      className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs cursor-pointer shadow-xs flex items-center gap-1.5"
+                      className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs cursor-pointer shadow-xs flex items-center gap-2"
                     >
-                      <Layers className="w-3.5 h-3.5" />
+                      <Layers className="w-4 h-4" />
                       <span>Ver Comparativo Lado a Lado</span>
                     </button>
                   </div>
                 </div>
               ) : activeSector && consolidatedRooms[activeSector.nome] ? (
-                <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl border border-emerald-300 dark:border-emerald-800 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-xs animate-in fade-in">
-                  <div className="flex items-center gap-2">
+                <div className="p-4 bg-emerald-50 dark:bg-emerald-950/40 rounded-2xl border border-emerald-300 dark:border-emerald-800 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-xs animate-in fade-in">
+                  <div className="flex items-center gap-2.5">
                     <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
                     <div className="text-emerald-950 dark:text-emerald-200 text-xs">
                       <strong>Sala Consolidada como Definitiva no Sistema</strong> (Despacho ASPEC nº <strong>{consolidatedRooms[activeSector.nome].protocolo}</strong>).
@@ -1750,27 +1861,46 @@ export const AuditView: React.FC<AuditViewProps> = ({
                       setActiveComparingSector(activeSector);
                       setShowRoomComparisonModal(true);
                     }}
-                    className="px-3 py-1 rounded-lg bg-white dark:bg-slate-800 border border-emerald-300 text-emerald-800 dark:text-emerald-300 font-bold text-xs hover:bg-emerald-100 dark:hover:bg-slate-700 cursor-pointer shrink-0"
+                    className="px-3.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-emerald-300 text-emerald-800 dark:text-emerald-300 font-bold text-xs hover:bg-emerald-100 dark:hover:bg-slate-700 cursor-pointer shrink-0"
                   >
                     Ver Comparativo Consolidado
                   </button>
                 </div>
               ) : null}
 
-              {/* FIELD TOOL: Verify Any Tombo Found in This Room that Wasn't on the Sheet */}
-              <div className="p-3 bg-amber-50 dark:bg-amber-950/30 rounded-xl border border-amber-300 dark:border-amber-800 text-xs space-y-2">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
-                  <div className="font-bold text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
-                    <ArrowRightLeft className="w-4 h-4 text-amber-600 shrink-0" />
-                    <span>Encontrou um bem nesta sala que NÃO estava no documento desta sala?</span>
+              {/* ========================================================================= */}
+              {/* NOVA ESTAÇÃO CENTRAL DE CONFERÊNCIA FÍSICA & BIPADOR DA SALA (ÁREA NOBRE) */}
+              {/* ========================================================================= */}
+              <div className="p-5 sm:p-7 bg-gradient-to-br from-slate-900 via-slate-850 to-slate-900 text-white rounded-3xl border border-slate-700 shadow-xl space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 bg-emerald-500 text-slate-950 rounded-2xl shadow-md">
+                      <Barcode className="w-6 h-6 stroke-[2.5]" />
+                    </div>
+                    <div>
+                      <h4 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+                        <span>Terminal de Conferência Física & Bipador da Sala</span>
+                        <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                          Bipagem Rápida
+                        </span>
+                      </h4>
+                      <p className="text-xs text-slate-400">
+                        Bipe com leitor de código de barras ou digite a plaqueta do bem físico. Confirmação instantânea na sala!
+                      </p>
+                    </div>
                   </div>
-                  <span className="text-[10px] text-amber-700 dark:text-amber-400 font-medium">
-                    (Anota o achado real para o espelho do ASPEC sem bagunçar a base contábil)
+
+                  <span className="text-[11px] text-emerald-400 font-mono font-semibold">
+                    Atalho: Tecla [Enter] para conferir
                   </span>
                 </div>
 
-                <div className="flex items-center gap-2">
+                {/* Big Input Bar for Quick Verification */}
+                <div className="flex flex-col sm:flex-row items-stretch gap-2.5">
                   <div className="relative flex-1">
+                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 flex items-center gap-1.5 pointer-events-none">
+                      <Tag className="w-5 h-5 text-emerald-400" />
+                    </div>
                     <input
                       type="text"
                       value={foreignTomboInput}
@@ -1784,43 +1914,87 @@ export const AuditView: React.FC<AuditViewProps> = ({
                           handleSearchForeignTombo();
                         }
                       }}
-                      placeholder="Digite a placa do bem que você achou aqui (ex: 0142 ou tombo SESA)..."
-                      className="w-full p-2 pl-3 rounded-lg bg-white dark:bg-slate-850 border border-amber-300 dark:border-amber-700 text-slate-900 dark:text-white font-mono text-xs"
+                      placeholder="Bipe o código de barras ou digite a plaqueta (ex: 0184 ou tombo SESA)..."
+                      className="w-full h-14 sm:h-16 pl-12 pr-4 rounded-2xl bg-slate-950 border-2 border-emerald-500/50 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20 text-white font-mono text-base sm:text-lg font-black placeholder:text-slate-500 shadow-inner transition-all"
                     />
                   </div>
+
                   <button
                     type="button"
                     onClick={handleSearchForeignTombo}
-                    className="px-3.5 py-2 text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg cursor-pointer shrink-0"
+                    className="h-14 sm:h-16 px-6 sm:px-8 text-sm sm:text-base font-black bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-2xl cursor-pointer shadow-lg transition-transform active:scale-95 flex items-center justify-center gap-2 shrink-0 ring-2 ring-emerald-400/40"
                   >
-                    Verificar Onde Deveria Estar
+                    <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
+                    <span>Conferir Plaqueta Agora</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRoomNewTombo(foreignTomboInput.trim());
+                      setRoomNewTomboSesa('');
+                      setRoomNewDescricao('');
+                      setRoomNewSemPlaqueta(false);
+                      setShowAddRoomAssetModal(true);
+                    }}
+                    className="h-14 sm:h-16 px-5 text-xs sm:text-sm font-bold bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-2xl cursor-pointer shadow-md transition-colors flex items-center justify-center gap-2 shrink-0"
+                    title="Cadastrar bem encontrado nesta sala que não consta no ASPEC"
+                  >
+                    <Plus className="w-4 h-4 text-slate-950" />
+                    <span>Cadastrar Fora do ASPEC</span>
                   </button>
                 </div>
 
-                {/* Feedback */}
+                {/* Instant Feedback from quick scan or search */}
+                {lastScannedFeedback && (
+                  <div className="p-4 rounded-2xl bg-emerald-500/20 border-2 border-emerald-400 text-emerald-100 flex items-center justify-between gap-3 animate-in zoom-in-95">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-emerald-500 text-slate-950 rounded-xl font-black">
+                        <CheckCheck className="w-5 h-5 stroke-[3]" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-black text-lg text-emerald-300">
+                            Plaqueta {lastScannedFeedback.tombo}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-500 text-slate-950 font-black text-[10px] uppercase">
+                            Presente na Sala
+                          </span>
+                        </div>
+                        <p className="text-xs text-emerald-100 font-bold">{lastScannedFeedback.nome}</p>
+                        {lastScannedFeedback.detalhes && (
+                          <p className="text-[11px] text-emerald-300/80 mt-0.5">{lastScannedFeedback.detalhes}</p>
+                        )}
+                      </div>
+                    </div>
+                    <button onClick={() => setLastScannedFeedback(null)} className="text-emerald-400 hover:text-white font-mono text-sm">✕</button>
+                  </div>
+                )}
+
+                {/* Foreign Tombo Feedback Box */}
                 {foreignTomboFeedback && (
-                  <div className={`p-2.5 rounded-lg border text-xs font-medium flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
+                  <div className={`p-4 rounded-2xl border text-xs font-medium flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in ${
                     foreignTomboFeedback.type === 'found_other'
-                      ? 'bg-amber-100 dark:bg-amber-950 text-amber-950 dark:text-amber-200 border-amber-400'
+                      ? 'bg-amber-500/20 text-amber-100 border-amber-400'
                       : foreignTomboFeedback.type === 'not_in_aspec'
-                      ? 'bg-rose-100 dark:bg-rose-950 text-rose-950 dark:text-rose-200 border-rose-300'
-                      : 'bg-emerald-100 dark:bg-emerald-950 text-emerald-950 dark:text-emerald-200 border-emerald-300'
+                      ? 'bg-rose-500/20 text-rose-100 border-rose-400'
+                      : 'bg-emerald-500/20 text-emerald-100 border-emerald-400'
                   }`}>
-                    <div>
-                      <p>{foreignTomboFeedback.message}</p>
+                    <div className="space-y-1">
+                      <p className="text-sm font-bold">{foreignTomboFeedback.message}</p>
                       {foreignTomboFeedback.type === 'found_other' && (
-                        <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5">
+                        <p className="text-[11px] text-amber-200">
                           Ação no ASPEC: <strong>Transferência Interna de Carga</strong> de "{foreignTomboFeedback.asset?.setorNome}" para esta sala ("{activeSector?.nome}").
                         </p>
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-2.5 shrink-0">
                       {foreignTomboFeedback.type === 'found_other' && foreignTomboFeedback.asset && (
                         <button
                           type="button"
                           onClick={() => handleConfirmForeignAssetInCurrentRoom(foreignTomboFeedback.asset!)}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold cursor-pointer"
+                          className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl text-xs font-black cursor-pointer shadow-md"
                         >
                           ✓ Registrar Presença Nesta Sala
                         </button>
@@ -1834,16 +2008,16 @@ export const AuditView: React.FC<AuditViewProps> = ({
                             setShowAddRoomAssetModal(true);
                             setForeignTomboFeedback(null);
                           }}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold cursor-pointer"
+                          className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-xl text-xs font-black cursor-pointer shadow-md"
                         >
-                          + Cadastrar Fora do ASPEC
+                          + Cadastrar Fora do ASPEC Agora
                         </button>
                       )}
 
                       <button
                         type="button"
                         onClick={() => setForeignTomboFeedback(null)}
-                        className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-xs px-1"
+                        className="text-slate-400 hover:text-white text-xs px-2"
                       >
                         ✕
                       </button>
@@ -1852,239 +2026,382 @@ export const AuditView: React.FC<AuditViewProps> = ({
                 )}
               </div>
 
-              {/* Room Stats Pill and Search Bar */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 text-xs">
-                {/* Status Filter Buttons */}
-                <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
-                  <button
-                    type="button"
-                    onClick={() => setRoomStatusFilter('todos')}
-                    className={`px-2.5 py-1 rounded font-bold cursor-pointer ${
-                      roomStatusFilter === 'todos' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs' : 'text-slate-600 dark:text-slate-400'
-                    }`}
-                  >
-                    Todos ({activeSector?.assetsCount || 0})
-                  </button>
+              {/* ========================================================================= */}
+              {/* FILTROS DE STATUS, BUSCA E ALTERNADOR DE MODO DE VISUALIZAÇÃO */}
+              {/* ========================================================================= */}
+              <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 pt-2">
+                {/* Big Status Filter Buttons */}
+                <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1.5 rounded-2xl flex-wrap sm:flex-nowrap">
                   <button
                     type="button"
                     onClick={() => setRoomStatusFilter('pendentes')}
-                    className={`px-2.5 py-1 rounded font-bold cursor-pointer ${
-                      roomStatusFilter === 'pendentes' ? 'bg-white dark:bg-slate-700 text-amber-600 shadow-xs' : 'text-slate-600 dark:text-slate-400'
+                    className={`px-3.5 py-2 rounded-xl text-xs font-black cursor-pointer transition-all flex items-center gap-1.5 ${
+                      roomStatusFilter === 'pendentes' 
+                        ? 'bg-amber-500 text-slate-950 shadow-sm' 
+                        : 'text-slate-600 dark:text-slate-300 hover:text-amber-600'
                     }`}
                   >
-                    Pendentes ({activeSector?.pendingCount || 0})
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Pendentes para Aferir ({activeSector?.pendingCount || 0})</span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setRoomStatusFilter('todos')}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 ${
+                      roomStatusFilter === 'todos' 
+                        ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' 
+                        : 'text-slate-600 dark:text-slate-300'
+                    }`}
+                  >
+                    <span>Todos os Bens ({activeSector?.assetsCount || 0})</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setRoomStatusFilter('conferidos')}
-                    className={`px-2.5 py-1 rounded font-bold cursor-pointer ${
-                      roomStatusFilter === 'conferidos' ? 'bg-white dark:bg-slate-700 text-emerald-600 shadow-xs' : 'text-slate-600 dark:text-slate-400'
+                    className={`px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 ${
+                      roomStatusFilter === 'conferidos' 
+                        ? 'bg-emerald-600 text-white shadow-sm' 
+                        : 'text-slate-600 dark:text-slate-300 hover:text-emerald-600'
                     }`}
                   >
-                    Conferidos ({activeSector?.checkedCount || 0})
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Conferidos ({activeSector?.checkedCount || 0})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setRoomStatusFilter('divergentes')}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 ${
+                      roomStatusFilter === 'divergentes' 
+                        ? 'bg-rose-600 text-white shadow-sm' 
+                        : 'text-slate-600 dark:text-slate-300 hover:text-rose-600'
+                    }`}
+                  >
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <span>Divergentes ({activeSectorAssets.filter(a => a.auditoria?.statusDivergencia === 'setor_divergente' || a.auditoria?.statusDivergencia === 'nao_encontrado').length})</span>
                   </button>
                 </div>
 
-                {/* Search within this Room */}
-                <div className="relative w-full sm:w-64">
-                  <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
-                  <input
-                    type="text"
-                    value={roomAssetSearchQuery}
-                    onChange={(e) => setRoomAssetSearchQuery(e.target.value)}
-                    placeholder="Buscar plaqueta / nome na sala..."
-                    className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
-                  />
+                {/* Right: Layout Toggle + Search Bar */}
+                <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
+                  {/* View Mode Toggle: Ergonomic / Large vs Compact */}
+                  <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => setInspectionLayout('ergonomic')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                        inspectionLayout === 'ergonomic'
+                          ? 'bg-emerald-500 text-slate-950 shadow-xs'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                      }`}
+                      title="Modo Vistoria Ampla com botões e plaquetas gigantes (ideal para conferência física em campo ou tablet)"
+                    >
+                      <LayoutGrid className="w-3.5 h-3.5" />
+                      <span>Modo Ergonômico (Grande)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setInspectionLayout('compact')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                        inspectionLayout === 'compact'
+                          ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                      }`}
+                      title="Modo Tabela Compacta para telas desktop"
+                    >
+                      <List className="w-3.5 h-3.5" />
+                      <span>Modo Compacto</span>
+                    </button>
+                  </div>
+
+                  {/* Search within this Room */}
+                  <div className="relative w-full sm:w-64">
+                    <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={roomAssetSearchQuery}
+                      onChange={(e) => setRoomAssetSearchQuery(e.target.value)}
+                      placeholder="Filtrar por plaqueta, nome..."
+                      className="w-full pl-10 pr-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                    />
+                  </div>
                 </div>
               </div>
 
-              {/* ASSETS LIST IN THIS ROOM */}
-              <div className="space-y-3">
-                {activeSectorAssets.map((asset, idx) => {
+              {/* ========================================================================= */}
+              {/* ASSETS LIST IN THIS ROOM: ERGONOMIC VIEW (LARGE TOUCH TARGETS) OR COMPACT */}
+              {/* ========================================================================= */}
+              <div className="space-y-4 pt-1">
+                {activeSectorAssets.map((asset) => {
                   const isChecked = asset.auditoria?.conferido;
                   const isDivergent = asset.auditoria?.statusDivergencia === 'setor_divergente' || asset.auditoria?.statusDivergencia === 'nao_encontrado';
 
-                  return (
-                    <div
-                      key={asset.id}
-                      className={`p-4 rounded-xl border transition-all ${
-                        isChecked && !isDivergent
-                          ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800'
-                          : isDivergent
-                          ? 'bg-amber-50/40 dark:bg-amber-950/20 border-amber-300 dark:border-amber-800'
-                          : 'bg-white dark:bg-slate-850 border-slate-200 dark:border-slate-800'
-                      }`}
-                    >
-                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                        {/* Asset Details */}
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm sm:text-base font-black font-mono text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 rounded border border-slate-300 dark:border-slate-700 flex items-center gap-1">
-                              <span>{asset.tombamento}</span>
-                              <span className="text-[10px] text-slate-400 font-sans font-normal">(4d)</span>
-                            </span>
-
-                            {/* Tombo SESA (6 dígitos) se houver */}
-                            {asset.tomboOrigemSesa && (
-                              <span className="text-xs font-mono font-bold text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-950/80 px-2 py-0.5 rounded border border-blue-300 dark:border-blue-700 flex items-center gap-1">
-                                <span className="text-[9px] uppercase font-sans">SESA:</span>
-                                <span>{asset.tomboOrigemSesa}</span>
-                                <span className="text-[9px] font-sans font-normal">(6d)</span>
-                              </span>
-                            )}
-
-                            {/* Origin Badge (CPSMS, SESA, UFC) */}
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                              asset.origemTombo.includes('SESA')
-                                ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border border-blue-300'
-                                : asset.origemTombo.includes('UFC')
-                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300'
-                                : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300'
-                            }`}>
-                              {asset.origemTombo.split(' ')[0]}
-                            </span>
-
-                            {asset.duploTombamento && (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 border border-purple-300">
-                                🏷️ Plaqueta Dupla
-                              </span>
-                            )}
-
-                            {asset.foraDoAspec && (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300">
-                                ⚠️ Fora do ASPEC
-                              </span>
-                            )}
-
-                            {asset.formaAquisicao && (
-                              <span className="text-[10px] text-slate-500 font-semibold">
-                                {asset.formaAquisicao}
-                              </span>
-                            )}
-                          </div>
-
-                          <h4 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white leading-snug">
-                            {asset.descricao}
-                          </h4>
-
-                          <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-3 flex-wrap">
-                            {asset.fornecedor && asset.fornecedor !== '-' && (
-                              <span>Fornecedor: <strong>{asset.fornecedor}</strong></span>
-                            )}
-                            {asset.numeroSerie && asset.numeroSerie !== '-' && (
-                              <span>S/N: <strong className="font-mono">{asset.numeroSerie}</strong></span>
-                            )}
-                            <span>Valor: <strong>{formatBRL(asset.valorAquisicao || asset.valorBrutoContabil || 0)}</strong></span>
-                            <span>Responsável: <strong>{asset.responsavelNome}</strong></span>
-                          </div>
-
-                          {/* Audit Status Note */}
-                          {isChecked && (
-                            <div className="text-[11px] text-emerald-700 dark:text-emerald-300 font-semibold pt-1 flex items-center gap-1.5">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                              <span>
-                                Conferido por {asset.auditoria?.responsavelConferencia || currentProfile.nome}
-                              </span>
-                            </div>
-                          )}
-
-                          {isDivergent && (
-                            <div className="text-[11px] text-amber-700 dark:text-amber-300 font-semibold pt-1 flex items-center gap-1.5">
-                              <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                              <span>{asset.auditoria?.observacaoAuditoria || 'Divergência registrada'}</span>
-                            </div>
-                          )}
-
-                          {asset.auditoria?.statusDivergencia === 'setor_divergente' && (
-                            <div className="mt-2 p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 text-xs text-amber-950 dark:text-amber-200 space-y-1.5">
-                              <div className="flex items-center gap-1.5 font-bold text-[11px] text-amber-900 dark:text-amber-300 flex-wrap">
-                                <span className={`px-2 py-0.5 rounded text-[9px] uppercase font-black tracking-wide ${
-                                  asset.statusRegularizacaoAspec === 'oficializado'
-                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                    : 'bg-amber-200 text-amber-950 border border-amber-400'
-                                }`}>
-                                  {asset.statusRegularizacaoAspec === 'oficializado' ? '✓ Oficializado no ASPEC' : '📍 Localização Provisória no Caderno'}
-                                </span>
-                                <span>{asset.statusRegularizacaoAspec === 'oficializado' ? 'Dados Unificados Oficialmente' : 'Aguardando Baixa Definitiva no ASPEC'}</span>
+                  if (inspectionLayout === 'ergonomic') {
+                    // MODO ERGONÔMICO: TAMANHO CONFORTÁVEL, PLAQUETA GIGANTE, BOTÕES GRANDES
+                    return (
+                      <div
+                        key={asset.id}
+                        className={`p-5 sm:p-6 rounded-3xl border-2 transition-all shadow-xs ${
+                          isChecked && !isDivergent
+                            ? 'bg-emerald-50/70 dark:bg-emerald-950/25 border-emerald-400 dark:border-emerald-700 ring-1 ring-emerald-500/20'
+                            : isDivergent
+                            ? 'bg-amber-50/70 dark:bg-amber-950/25 border-amber-400 dark:border-amber-700'
+                            : 'bg-white dark:bg-slate-850 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+                          {/* Asset Details */}
+                          <div className="space-y-2.5 flex-1">
+                            {/* Plaqueta & Tags Header */}
+                            <div className="flex items-center gap-2.5 flex-wrap">
+                              {/* Plaqueta Principal Monumental */}
+                              <div className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-950 text-emerald-400 font-mono font-black text-lg sm:text-2xl shadow-sm border border-slate-700 tracking-tight">
+                                <span>{asset.tombamento}</span>
+                                <span className="text-[10px] text-slate-400 font-sans font-normal">(4d)</span>
                               </div>
-                              <div className="text-[11px] leading-snug text-slate-800 dark:text-slate-200">
-                                • Registro Original no ASPEC: <strong>{asset.setorOriginalAspec || asset.setorNome}</strong> ({asset.unidadeOriginalAspec || asset.unidadeNome})<br />
-                                • Localização Física Conferida: <strong className="text-emerald-800 dark:text-emerald-300 font-bold">{asset.auditoria?.setorEncontrado || activeSector?.nome}</strong>
-                              </div>
-                              <p className="text-[10px] text-slate-600 dark:text-slate-400 italic">
-                                {asset.statusRegularizacaoAspec === 'oficializado'
-                                  ? '✓ Baixa contábil confirmada pela Gestora. Registros físicos e contábeis unificados com sucesso nesta sala.'
-                                  : '* O registro definitivo nesta sala só deve ser oficializado após a Gestora confirmar a baixa/mudança definitiva no sistema ASPEC (unificando os dados após o "OK" oficial).'}
-                              </p>
-                              {asset.statusRegularizacaoAspec !== 'oficializado' && (
-                                <div className="pt-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => setAssetToOfficialize(asset)}
-                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-xs cursor-pointer transition-colors"
-                                  >
-                                    <CheckCircle2 className="w-4 h-4" />
-                                    <span>Confirmar Baixa Definitiva no ASPEC (OK Oficial da Gestora)</span>
-                                  </button>
+
+                              {/* Tombo SESA (6 dígitos) se houver */}
+                              {asset.tomboOrigemSesa && (
+                                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-100 dark:bg-blue-950 text-blue-900 dark:text-blue-200 font-mono font-bold text-sm sm:text-base border border-blue-300 dark:border-blue-700">
+                                  <span className="text-[10px] uppercase font-sans font-black">SESA:</span>
+                                  <span>{asset.tomboOrigemSesa}</span>
+                                  <span className="text-[10px] font-sans font-normal">(6d)</span>
                                 </div>
                               )}
-                            </div>
-                          )}
-                        </div>
 
-                        {/* Action Buttons for this Asset */}
-                        <div className="flex items-center gap-2 shrink-0">
-                          {!isChecked ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => handleQuickConfirm(asset)}
-                                className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-lg transition-colors cursor-pointer min-h-[38px] shadow-xs"
-                                title="Confirmar que o bem está presente e conforme nesta sala"
-                              >
-                                <Check className="w-4 h-4 stroke-[3]" />
-                                <span>Confirmar Presença</span>
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => handleMarkMissing(asset)}
-                                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-800 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-950/60 border border-rose-300 dark:border-rose-800 rounded-lg transition-colors cursor-pointer min-h-[38px]"
-                                title="Marcar bem como não localizado nesta sala. Fique tranquila: o item NÃO é apagado nem dado baixa contábil. Ele entra em apuração para cruzar com as outras salas."
-                              >
-                                <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-                                <span>Não Visto nesta Sala</span>
-                              </button>
-                            </>
-                          ) : (
-                            <div className="flex items-center gap-2">
-                              <span className="px-2.5 py-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-200 text-xs font-bold border border-emerald-300 flex items-center gap-1">
-                                <Check className="w-3.5 h-3.5" />
-                                Presente
+                              {/* Origin Badge (CPSMS, SESA, UFC) */}
+                              <span className={`text-xs font-black px-2.5 py-1 rounded-xl uppercase tracking-wider ${
+                                asset.origemTombo.includes('SESA')
+                                  ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border border-blue-300'
+                                  : asset.origemTombo.includes('UFC')
+                                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300'
+                                  : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300'
+                              }`}>
+                                {asset.origemTombo.split(' ')[0]}
                               </span>
 
-                              <button
-                                type="button"
-                                onClick={() => handleUndoAudit(asset)}
-                                className="text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 underline cursor-pointer p-1"
-                              >
-                                Desfazer
-                              </button>
+                              {asset.duploTombamento && (
+                                <span className="text-xs font-bold px-2.5 py-1 rounded-xl bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 border border-purple-300">
+                                  🏷️ Plaqueta Dupla
+                                </span>
+                              )}
+
+                              {asset.foraDoAspec && (
+                                <span className="text-xs font-bold px-2.5 py-1 rounded-xl bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300">
+                                  ⚠️ Fora do ASPEC
+                                </span>
+                              )}
+
+                              {asset.formaAquisicao && (
+                                <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold">
+                                  {asset.formaAquisicao}
+                                </span>
+                              )}
                             </div>
-                          )}
+
+                            {/* Description in clear, readable size */}
+                            <h4 className="text-base sm:text-lg font-black text-slate-900 dark:text-white leading-snug">
+                              {asset.descricao}
+                            </h4>
+
+                            {/* Specifications Row */}
+                            <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-4 flex-wrap pt-0.5">
+                              {asset.fornecedor && asset.fornecedor !== '-' && (
+                                <span>Fornecedor: <strong className="text-slate-900 dark:text-white">{asset.fornecedor}</strong></span>
+                              )}
+                              {asset.numeroSerie && asset.numeroSerie !== '-' && (
+                                <span>S/N: <strong className="font-mono text-slate-900 dark:text-white font-bold">{asset.numeroSerie}</strong></span>
+                              )}
+                              <span>Valor Contábil: <strong className="font-mono text-slate-900 dark:text-white">{formatBRL(asset.valorAquisicao || asset.valorBrutoContabil || 0)}</strong></span>
+                              <span>Responsável: <strong className="text-slate-900 dark:text-white">{asset.responsavelNome}</strong></span>
+                            </div>
+
+                            {/* Audit Status Note */}
+                            {isChecked && !isDivergent && (
+                              <div className="text-xs text-emerald-800 dark:text-emerald-300 font-bold pt-1 flex items-center gap-2">
+                                <CheckCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                                <span>
+                                  Conferido e presente na sala · Aferido por {asset.auditoria?.responsavelConferencia || currentProfile.nome}
+                                </span>
+                              </div>
+                            )}
+
+                            {isDivergent && (
+                              <div className="text-xs text-amber-800 dark:text-amber-300 font-bold pt-1 flex items-center gap-2">
+                                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                                <span>{asset.auditoria?.observacaoAuditoria || 'Divergência registrada na vistoria'}</span>
+                              </div>
+                            )}
+
+                            {asset.auditoria?.statusDivergencia === 'setor_divergente' && (
+                              <div className="mt-2.5 p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 text-xs text-amber-950 dark:text-amber-200 space-y-2">
+                                <div className="flex items-center gap-2 font-bold text-xs text-amber-900 dark:text-amber-300 flex-wrap">
+                                  <span className={`px-2.5 py-0.5 rounded text-[10px] uppercase font-black tracking-wide ${
+                                    asset.statusRegularizacaoAspec === 'oficializado'
+                                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                      : 'bg-amber-200 text-amber-950 border border-amber-400'
+                                  }`}>
+                                    {asset.statusRegularizacaoAspec === 'oficializado' ? '✓ Oficializado no ASPEC' : '📍 Localização Provisória no Caderno'}
+                                  </span>
+                                  <span>{asset.statusRegularizacaoAspec === 'oficializado' ? 'Dados Unificados Oficialmente' : 'Aguardando Baixa Definitiva no ASPEC'}</span>
+                                </div>
+                                <div className="text-xs leading-relaxed text-slate-800 dark:text-slate-200">
+                                  • Registro Original no ASPEC: <strong>{asset.setorOriginalAspec || asset.setorNome}</strong> ({asset.unidadeOriginalAspec || asset.unidadeNome})<br />
+                                  • Localização Física Conferida: <strong className="text-emerald-800 dark:text-emerald-300 font-bold">{asset.auditoria?.setorEncontrado || activeSector?.nome}</strong>
+                                </div>
+                                <p className="text-[11px] text-slate-600 dark:text-slate-400 italic">
+                                  {asset.statusRegularizacaoAspec === 'oficializado'
+                                    ? '✓ Baixa contábil confirmada pela Gestora. Registros físicos e contábeis unificados com sucesso nesta sala.'
+                                    : '* O registro definitivo nesta sala só deve ser oficializado após a Gestora confirmar a baixa/mudança definitiva no sistema ASPEC (unificando os dados após o "OK" oficial).'}
+                                </p>
+                                {asset.statusRegularizacaoAspec !== 'oficializado' && (
+                                  <div className="pt-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => setAssetToOfficialize(asset)}
+                                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-xs cursor-pointer transition-colors"
+                                    >
+                                      <CheckCircle2 className="w-4 h-4" />
+                                      <span>Confirmar Baixa Definitiva no ASPEC (OK Oficial da Gestora)</span>
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* ACTION BUTTONS FOR THIS ASSET (LARGE ERGONOMIC HIT TARGETS) */}
+                          <div className="flex flex-col sm:flex-row lg:flex-col items-stretch lg:items-end justify-center gap-2.5 shrink-0 pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-100 dark:border-slate-800">
+                            {!isChecked ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleQuickConfirm(asset)}
+                                  className="px-6 py-4 text-sm sm:text-base font-black bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-2xl transition-all cursor-pointer shadow-lg ring-2 ring-emerald-500/40 hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2.5"
+                                  title="Confirmar que o bem está presente e conforme nesta sala física"
+                                >
+                                  <Check className="w-5 h-5 stroke-[3]" />
+                                  <span>✓ ESTÁ PRESENTE NA SALA</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleMarkMissing(asset)}
+                                  className="px-4 py-3 text-xs sm:text-sm font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-950/60 border-2 border-rose-300 dark:border-rose-800 rounded-2xl transition-all cursor-pointer flex items-center justify-center gap-2"
+                                  title="Marcar bem como não localizado nesta sala física"
+                                >
+                                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                                  <span>Não Encontrado na Sala</span>
+                                </button>
+                              </>
+                            ) : (
+                              <div className="flex flex-col sm:flex-row lg:flex-col items-stretch lg:items-end gap-2">
+                                <div className="px-5 py-3 rounded-2xl bg-emerald-500 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md">
+                                  <CheckCheck className="w-4 h-4 stroke-[3]" />
+                                  <span>✓ CONFERIDO E PRESENTE</span>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleUndoAudit(asset)}
+                                  className="text-xs font-bold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 underline cursor-pointer p-1 text-center"
+                                >
+                                  Desfazer Conferência
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
+                    );
+                  } else {
+                    // MODO COMPACTO: VISUAL DENSO / TABELA
+                    return (
+                      <div
+                        key={asset.id}
+                        className={`p-3.5 rounded-xl border transition-all ${
+                          isChecked && !isDivergent
+                            ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800'
+                            : isDivergent
+                            ? 'bg-amber-50/40 dark:bg-amber-950/20 border-amber-300 dark:border-amber-800'
+                            : 'bg-white dark:bg-slate-850 border-slate-200 dark:border-slate-800'
+                        }`}
+                      >
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-black font-mono text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700">
+                                {asset.tombamento}
+                              </span>
+                              {asset.tomboOrigemSesa && (
+                                <span className="text-xs font-mono font-bold text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-950/80 px-2 py-0.5 rounded border border-blue-300">
+                                  SESA: {asset.tomboOrigemSesa}
+                                </span>
+                              )}
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                                {asset.origemTombo.split(' ')[0]}
+                              </span>
+                            </div>
+                            <h4 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white">
+                              {asset.descricao}
+                            </h4>
+                            <div className="text-[11px] text-slate-500 flex items-center gap-3">
+                              <span>Valor: {formatBRL(asset.valorAquisicao || 0)}</span>
+                              <span>Resp: {asset.responsavelNome}</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            {!isChecked ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleQuickConfirm(asset)}
+                                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-lg cursor-pointer"
+                                >
+                                  <Check className="w-4 h-4" />
+                                  <span>Confirmar</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleMarkMissing(asset)}
+                                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 border border-rose-300 rounded-lg cursor-pointer"
+                                >
+                                  <AlertTriangle className="w-3.5 h-3.5" />
+                                  <span>Não Visto</span>
+                                </button>
+                              </>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span className="px-2.5 py-1 rounded bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-300">
+                                  ✓ Presente
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUndoAudit(asset)}
+                                  className="text-xs text-slate-400 hover:text-slate-600 underline cursor-pointer"
+                                >
+                                  Desfazer
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
                 })}
 
                 {activeSectorAssets.length === 0 && (
-                  <div className="p-8 text-center bg-slate-50 dark:bg-slate-850 rounded-xl border border-slate-200 dark:border-slate-800 text-xs text-slate-500 space-y-1">
-                    <p className="font-bold text-slate-700 dark:text-slate-300">
+                  <div className="p-10 text-center bg-slate-50 dark:bg-slate-850 rounded-3xl border border-slate-200 dark:border-slate-800 text-xs text-slate-500 space-y-2">
+                    <p className="font-bold text-sm text-slate-700 dark:text-slate-300">
                       Nenhum bem encontrado com os filtros atuais nesta sala.
                     </p>
-                    <p className="text-[11px]">
-                      Alterne o filtro para "Todos" ou limpe o termo de busca.
+                    <p className="text-xs">
+                      Alterne o filtro para "Todos os Bens" ou limpe o termo de busca.
                     </p>
                   </div>
                 )}
