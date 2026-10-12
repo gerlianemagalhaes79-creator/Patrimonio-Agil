@@ -190,6 +190,34 @@ export function getAssetFullLocation(a: Asset): { area: string; subarea: string;
   };
 }
 
+const GENERIC_LOCATION_TERMS = new Set([
+  'sala', 'salas', 'geral', 'sala geral', 'area', 'areas', 'setor', 'setores',
+  'bloco', 'unidade', 'sede', 'apoio', 'externa', 'ambulatorio', 'predio', 'central'
+]);
+
+/**
+ * Validação segura de prefixo ou correspondência exata sem códigos numéricos (ex: "004 - COPA" <-> "COPA").
+ * Impede cruzamentos indevidos por termos genéricos como "sala" ou "área".
+ */
+export function isExactOrSafePrefixMatch(roomA: string, roomB: string): boolean {
+  if (!roomA || !roomB) return false;
+  const a = normalizeLoc(roomA).replace(/^[0-9]+[\s\-_.]*/, '').trim();
+  const b = normalizeLoc(roomB).replace(/^[0-9]+[\s\-_.]*/, '').trim();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (isUnitName(a) || isUnitName(b)) return false;
+  if (GENERIC_LOCATION_TERMS.has(a) || GENERIC_LOCATION_TERMS.has(b)) return false;
+
+  // Permite correspondência com prefixo composto se tiver limite de palavra e tamanho seguro (>= 5 letras)
+  if (a.length >= 5 && b.length >= 5) {
+    if (a.startsWith(b + ' ') || a.startsWith(b + ' -') || a.startsWith(b + ' –') ||
+        b.startsWith(a + ' ') || b.startsWith(a + ' -') || b.startsWith(a + ' –')) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Valida estritamente se um bem pertence oficialmente a uma sala / subárea no CADASTRO DO ASPEC.
  * IGNORA a auditoria física in loco para refletir a Carga Contábil Oficial Registrada.
@@ -211,26 +239,11 @@ export function doesAssetOfficiallyMatchRoom(a: Asset, roomName: string): boolea
   const aSetor = normalizeLoc(a.setorNome || '');
   if (aSetor && !isUnitName(aSetor) && aSetor === target) return true;
 
-  // Casos com código de subárea do ASPEC: "004 - COPA" <-> "COPA"
-  const cleanTarget = target.replace(/^[0-9]+[\s\-_.]*/, '').trim();
-  const cleanOfficial = officialRoom.replace(/^[0-9]+[\s\-_.]*/, '').trim();
-  const cleanSub = aSub.replace(/^[0-9]+[\s\-_.]*/, '').trim();
-  const cleanOrig = aOrig.replace(/^[0-9]+[\s\-_.]*/, '').trim();
-  const cleanSetor = aSetor.replace(/^[0-9]+[\s\-_.]*/, '').trim();
-
-  if (cleanTarget.length >= 3) {
-    if (cleanOfficial === cleanTarget) return true;
-    if (cleanSub === cleanTarget) return true;
-    if (cleanOrig === cleanTarget) return true;
-    if (cleanSetor && !isUnitName(cleanSetor) && cleanSetor === cleanTarget) return true;
-
-    if (officialRoom.includes(cleanTarget) && cleanTarget.length >= 4) return true;
-    if (target.includes(cleanOfficial) && cleanOfficial.length >= 4 && !isUnitName(cleanOfficial)) return true;
-    if (cleanSub.includes(cleanTarget) && cleanTarget.length >= 4) return true;
-    if (cleanTarget.includes(cleanSub) && cleanSub.length >= 4) return true;
-    if (cleanOrig.includes(cleanTarget) && cleanTarget.length >= 4) return true;
-    if (cleanTarget.includes(cleanOrig) && cleanOrig.length >= 4) return true;
-  }
+  // Casos seguros com código numérico ("004 - COPA" <-> "COPA")
+  if (isExactOrSafePrefixMatch(officialRoom, target)) return true;
+  if (aSub && isExactOrSafePrefixMatch(aSub, target)) return true;
+  if (aOrig && isExactOrSafePrefixMatch(aOrig, target)) return true;
+  if (aSetor && !isUnitName(aSetor) && isExactOrSafePrefixMatch(aSetor, target)) return true;
 
   return false;
 }
@@ -247,18 +260,17 @@ export function doesAssetPhysicallyMatchRoom(a: Asset, roomName: string): boolea
   // 1. Auditado explicitamente nesta subárea / sala
   const audSub = a.auditoria?.subsetorEncontrado || a.auditoria?.setorEncontrado;
   if (audSub) {
-    if (doesAssetOfficiallyMatchRoom({ ...a, subarea: audSub, subsetorNome: audSub, setorNome: audSub }, roomName)) {
+    const target = normalizeLoc(roomName);
+    const audNorm = normalizeLoc(audSub);
+    if (audNorm === target || isExactOrSafePrefixMatch(audNorm, target)) {
       return true;
     }
+    // Se o bem foi explicitamente localizado em OUTRA sala, ele não está aqui!
+    return false;
   }
 
   // 2. Se não auditado em outra sala e originalmente pertence a esta sala
-  if (!audSub && doesAssetOfficiallyMatchRoom(a, roomName)) {
-    return true;
-  }
-
-  // 3. Fallback genérico de localização
-  return doesAssetMatchRoom(a, roomName);
+  return doesAssetOfficiallyMatchRoom(a, roomName);
 }
 
 /**
@@ -268,32 +280,36 @@ export function doesAssetMatchRoom(a: Asset, roomName: string): boolean {
   if (!roomName) return false;
 
   const target = normalizeLoc(roomName);
-  const assetRoom = normalizeLoc(getAssetRoomName(a));
 
-  if (assetRoom === target) return true;
+  // 1. Prioridade absoluta: se o bem foi conferido / encontrado fisicamente em uma sala
+  const audSub = normalizeLoc(a.auditoria?.subsetorEncontrado || a.auditoria?.setorEncontrado || '');
+  if (audSub) {
+    if (audSub === target || isExactOrSafePrefixMatch(audSub, target)) {
+      return true;
+    }
+    // Se foi auditado em OUTRA sala física, não pertence a esta!
+    return false;
+  }
 
-  // Extrai identificadores de subárea
+  // 2. Subárea oficial do bem
   const aSub = normalizeLoc(a.subarea || a.subsetorNome || '');
-  if (aSub && aSub === target) return true;
+  if (aSub && (aSub === target || isExactOrSafePrefixMatch(aSub, target))) {
+    return true;
+  }
+
+  const assetRoom = normalizeLoc(getAssetRoomName(a));
+  if (assetRoom && (assetRoom === target || isExactOrSafePrefixMatch(assetRoom, target))) {
+    return true;
+  }
+
+  const aOrig = normalizeLoc(a.setorOriginalAspec || '');
+  if (aOrig && (aOrig === target || isExactOrSafePrefixMatch(aOrig, target))) {
+    return true;
+  }
 
   const aSetor = normalizeLoc(a.setorNome || '');
-  if (aSetor && !isUnitName(aSetor) && aSetor === target) return true;
-
-  const aAudSub = normalizeLoc(a.auditoria?.subsetorEncontrado || '');
-  if (aAudSub && aAudSub === target) return true;
-
-  // Casos com código de subárea do ASPEC: "004 - COPA" <-> "COPA"
-  const cleanTarget = target.replace(/^[0-9]+[\s\-_.]*/, '').trim();
-  const cleanAssetRoom = assetRoom.replace(/^[0-9]+[\s\-_.]*/, '').trim();
-  const cleanSub = aSub.replace(/^[0-9]+[\s\-_.]*/, '').trim();
-
-  if (cleanTarget.length >= 3) {
-    if (cleanAssetRoom === cleanTarget) return true;
-    if (cleanSub === cleanTarget) return true;
-    if (assetRoom.includes(cleanTarget) && cleanTarget.length >= 4) return true;
-    if (target.includes(cleanAssetRoom) && cleanAssetRoom.length >= 4) return true;
-    if (cleanSub.includes(cleanTarget) && cleanTarget.length >= 4) return true;
-    if (cleanTarget.includes(cleanSub) && cleanSub.length >= 4) return true;
+  if (aSetor && !isUnitName(aSetor) && (aSetor === target || isExactOrSafePrefixMatch(aSetor, target))) {
+    return true;
   }
 
   return false;
@@ -393,6 +409,51 @@ export function buildUnitSubareas(
   const unitAssets = assets.filter(a => getAssetUnitId(a) === unitId);
   const baseSectors = sectors.filter(s => s.unidadeId === unitId);
 
+  // Mapa persistente de salas revisadas / conferidas
+  const reviewedRoomsMap = new Map<string, { revisada: boolean; dataRevisao?: string; responsavelRevisao?: string }>();
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('cpsms_reviewed_rooms') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === 'object' && parsed !== null) {
+        Object.entries(parsed).forEach(([k, v]: [string, any]) => {
+          if (v && v.revisada !== false) {
+            reviewedRoomsMap.set(normalizeLoc(k), v);
+          }
+        });
+      }
+    }
+    const consolRaw = typeof localStorage !== 'undefined' ? localStorage.getItem('cpsms_room_consolidated') : null;
+    if (consolRaw) {
+      const consolParsed = JSON.parse(consolRaw);
+      if (typeof consolParsed === 'object' && consolParsed !== null) {
+        Object.keys(consolParsed).forEach(k => {
+          reviewedRoomsMap.set(normalizeLoc(k), { revisada: true });
+        });
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  // Setores base que já foram marcados como revisados
+  baseSectors.forEach(sec => {
+    if (sec.revisada) {
+      reviewedRoomsMap.set(normalizeLoc(sec.nome), {
+        revisada: true,
+        dataRevisao: sec.dataRevisao,
+        responsavelRevisao: sec.responsavelRevisao
+      });
+      if (sec.id) {
+        reviewedRoomsMap.set(normalizeLoc(sec.id), {
+          revisada: true,
+          dataRevisao: sec.dataRevisao,
+          responsavelRevisao: sec.responsavelRevisao
+        });
+      }
+    }
+  });
+
   const roomsMap = new Map<string, UnitSubareaRoom>();
 
   const registerSubarea = (
@@ -415,6 +476,9 @@ export function buildUnitSubareas(
     const normKey = normalizeLoc(clean);
     if (!normKey) return;
 
+    const isReviewedFromCache = reviewedRoomsMap.has(normKey) || (meta?.id ? reviewedRoomsMap.has(normalizeLoc(meta.id)) : false);
+    const isRevisada = Boolean(meta?.revisada || isReviewedFromCache);
+
     if (!roomsMap.has(normKey)) {
       const generatedId = meta?.id || `sub-${unitId}-${normKey.replace(/[^a-z0-9]/g, '-')}`;
       const prefix = unitId === 'ceo' ? 'CEO' : unitId === 'policlinica' ? 'POLI' : 'CPSMS';
@@ -431,12 +495,12 @@ export function buildUnitSubareas(
         responsavelMatricula: meta?.responsavelMatricula,
         bloco: inferArchitecturalBlock(clean, unitId, meta?.bloco),
         andar: meta?.andar || 'Térreo',
-        revisada: meta?.revisada || false,
+        revisada: isRevisada,
         macroSetorNome: meta?.macroSetorNome
       });
     } else {
       // Atualiza status se revisada
-      if (meta?.revisada) {
+      if (isRevisada) {
         const existing = roomsMap.get(normKey)!;
         existing.revisada = true;
       }
@@ -455,20 +519,18 @@ export function buildUnitSubareas(
     }
   });
 
-  // 2. Inclui apenas salas cadastradas explicitamente pelo usuário (custom)
+  // 2. Inclui salas de baseSectors (tanto customizadas quanto pré-existentes da unidade)
   baseSectors.forEach(sec => {
-    if (sec.id && sec.id.startsWith('sec-custom-')) {
-      registerSubarea(sec.nome, {
-        id: sec.id,
-        sigla: sec.sigla,
-        responsavelNome: sec.responsavelNome,
-        responsavelCargo: sec.responsavelCargo,
-        responsavelMatricula: sec.responsavelMatricula,
-        bloco: sec.bloco,
-        andar: sec.andar,
-        revisada: sec.revisada,
-      });
-    }
+    registerSubarea(sec.nome, {
+      id: sec.id,
+      sigla: sec.sigla,
+      responsavelNome: sec.responsavelNome,
+      responsavelCargo: sec.responsavelCargo,
+      responsavelMatricula: sec.responsavelMatricula,
+      bloco: sec.bloco,
+      andar: sec.andar,
+      revisada: sec.revisada || reviewedRoomsMap.has(normalizeLoc(sec.nome)) || (sec.id ? reviewedRoomsMap.has(normalizeLoc(sec.id)) : false),
+    });
   });
 
   // 3. Mapeia os bens para cada subárea e calcula estatísticas em tempo real
@@ -482,10 +544,15 @@ export function buildUnitSubareas(
       const divergentCount = roomAssets.filter(a => a.auditoria?.statusDivergencia === 'setor_divergente').length;
       const totalVal = roomAssets.reduce((sum, a) => sum + (a.valorAquisicao || a.valorBrutoContabil || 0), 0);
 
-      const percent = totalCount > 0 ? Math.round((checkedCount / totalCount) * 100) : (room.revisada ? 100 : 0);
+      const isRoomRevisada = room.revisada || 
+        reviewedRoomsMap.has(normalizeLoc(room.nome)) || 
+        (room.id ? reviewedRoomsMap.has(normalizeLoc(room.id)) : false) ||
+        (totalCount > 0 && checkedCount === totalCount);
+
+      const percent = totalCount > 0 ? Math.round((checkedCount / totalCount) * 100) : (isRoomRevisada ? 100 : 0);
 
       let visualStatus: 'concluida' | 'em_andamento' | 'pendente' | 'divergencia' = 'pendente';
-      if (room.revisada || (totalCount > 0 && percent === 100)) {
+      if (isRoomRevisada || (totalCount > 0 && percent === 100)) {
         visualStatus = 'concluida';
       } else if (missingCount > 0 || divergentCount > 0) {
         visualStatus = 'divergencia';
@@ -497,6 +564,7 @@ export function buildUnitSubareas(
 
       return {
         ...room,
+        revisada: isRoomRevisada,
         roomAssets,
         totalCount,
         checkedCount,
@@ -507,8 +575,8 @@ export function buildUnitSubareas(
         visualStatus,
       };
     })
-    // REGRA DE OURO: Elimina qualquer sala sem bens (exceto as criadas manualmente pelo usuário)
-    .filter(room => room.totalCount > 0 || room.id.startsWith('sec-custom-'));
+    // REGRA DE OURO: Elimina qualquer sala sem bens (exceto as criadas manualmente pelo usuário ou já revisadas)
+    .filter(room => room.totalCount > 0 || room.revisada || room.id.startsWith('sec-custom-'));
 
   // Ordena: primeiro salas com bens alocados (maior contagem), depois ordem alfabética
   roomsList.sort((a, b) => {

@@ -138,6 +138,9 @@ export interface Sector {
   revisada?: boolean; // Se a sala foi concluída e revisada no inventário
   dataRevisao?: string;
   responsavelRevisao?: string;
+  responsavelOriginalAspec?: string; // Responsável / Líder original registrado no ASPEC
+  liderAlterado?: boolean; // Se o líder desta sala foi alterado in loco
+  dataAlteracaoLider?: string;
   subsetores: SubSector[];
 }
 

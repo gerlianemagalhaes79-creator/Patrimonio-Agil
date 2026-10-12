@@ -37,7 +37,10 @@ import {
   LayoutGrid,
   List,
   ChevronDown,
-  CheckSquare
+  CheckSquare,
+  Users,
+  UserCheck,
+  Edit3
 } from 'lucide-react';
 import { MacroMicroInventoryReportModal } from './MacroMicroInventoryReportModal';
 import { AspecReconciliationModal } from './AspecReconciliationModal';
@@ -46,7 +49,9 @@ import { RoomAspecReportModal } from './RoomAspecReportModal';
 import { UnlocatedAssetsReportModal } from './UnlocatedAssetsReportModal';
 import { AspecOfficializationModal } from './AspecOfficializationModal';
 import { RoomComparisonModal } from './RoomComparisonModal';
+import { RoomResponsiblesModal } from './RoomResponsiblesModal';
 import { getAssetUnitId, getAssetRoomName, doesAssetMatchRoom, isUnitName, buildUnitSubareas, getAssetFullLocation, doesAssetOfficiallyMatchRoom, doesAssetPhysicallyMatchRoom } from '../utils/locationHelper';
+import { downloadAspecRoomPdf } from '../utils/aspecPdfGenerator';
 
 interface AuditViewProps {
   assets: Asset[];
@@ -136,6 +141,11 @@ export const AuditView: React.FC<AuditViewProps> = ({
     asset?: Asset;
     message: string;
   } | null>(null);
+
+  // Room Responsibles Assignment Modal & Inline Editing State
+  const [showRoomResponsiblesModal, setShowRoomResponsiblesModal] = useState<boolean>(false);
+  const [editingAssetResponsibleId, setEditingAssetResponsibleId] = useState<string | null>(null);
+  const [inlineResponsibleInput, setInlineResponsibleInput] = useState<string>('');
 
   // Hierarchy Selection State:
   // Step 1: Selected Unit (Default to initialUnitId or policlinica)
@@ -261,10 +271,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
       const targetLower = initialSectorName.trim().toLowerCase();
       const found = unitSectorsList.find(s => 
         s.nome.trim().toLowerCase() === targetLower ||
-        s.id === initialSectorName ||
-        doesAssetMatchRoom({} as Asset, s.nome) ||
-        s.nome.trim().toLowerCase().includes(targetLower) ||
-        targetLower.includes(s.nome.trim().toLowerCase())
+        s.id === initialSectorName
       );
       if (found) {
         setSelectedSectorId(found.id);
@@ -352,12 +359,8 @@ export const AuditView: React.FC<AuditViewProps> = ({
   // Batch Action: Confirm All Pending Assets in this Room
   const handleConfirmAllInSector = () => {
     if (!activeSector) return;
-    const secLower = activeSector.nome.trim().toLowerCase();
     const pendingList = unitAssets.filter(a => {
-      const aSetor = (a.setorNome || '').trim().toLowerCase();
-      const aArea = (a.area || '').trim().toLowerCase();
-      const aSub = (a.subsetorNome || a.subarea || '').trim().toLowerCase();
-      return (aSetor === secLower || aSub === secLower || aArea === secLower) && !a.auditoria?.conferido;
+      return doesAssetMatchRoom(a, activeSector.nome) && !a.auditoria?.conferido;
     });
 
     if (pendingList.length === 0) return;
@@ -369,14 +372,100 @@ export const AuditView: React.FC<AuditViewProps> = ({
         unidadeEncontrada: activeUnitInfo.nome,
         setorEncontrado: activeSector.nome,
         subsetorEncontrado: asset.subsetorNome || activeSector.nome,
-        observacaoAuditoria: `Conferência em lote da sala ${activeSector.nome} realizada pela Gestora de Patrimônio.`,
+        observacaoAuditoria: `Conferência da sala ${activeSector.nome} realizada pela Gestora de Patrimônio.`,
         responsavelConferencia: currentProfile.nome
       });
     });
 
     setBulkFeedback(`Sucesso! Todos os ${pendingList.length} bens pendentes do setor "${activeSector.nome}" foram conferidos.`);
-    markRoomAsDraft(activeSector.nome);
     setTimeout(() => setBulkFeedback(null), 5000);
+  };
+
+  // Concluir Sala & Baixar Automaticamente o PDF Oficial (Físico vs ASPEC)
+  const handleConcludeRoomWithPdf = () => {
+    if (!activeSector) return;
+
+    // 1. Confirmar quaisquer itens pendentes da sala
+    handleConfirmAllInSector();
+
+    // 2. Marcar sala como concluída/revisada no estado principal
+    if (onConcludeRoom) {
+      onConcludeRoom(activeSector.id || activeSector.nome);
+    }
+
+    // 3. Persistência imediata e garantida no localStorage
+    try {
+      const raw = localStorage.getItem('cpsms_reviewed_rooms');
+      const reviewedMap = raw ? JSON.parse(raw) : {};
+      const revData = {
+        revisada: true,
+        dataRevisao: new Date().toISOString(),
+        responsavelRevisao: currentProfile.nome,
+        nome: activeSector.nome
+      };
+      reviewedMap[activeSector.nome] = revData;
+      if (activeSector.id) {
+        reviewedMap[activeSector.id] = revData;
+      }
+      localStorage.setItem('cpsms_reviewed_rooms', JSON.stringify(reviewedMap));
+
+      // Remove rascunho se houver
+      const draftsRaw = localStorage.getItem('cpsms_room_drafts');
+      if (draftsRaw) {
+        const drafts = JSON.parse(draftsRaw);
+        delete drafts[activeSector.nome];
+        localStorage.setItem('cpsms_room_drafts', JSON.stringify(drafts));
+        setRoomDrafts(drafts);
+      }
+    } catch (e) {
+      console.warn('Erro ao persistir sala revisada no localStorage:', e);
+    }
+
+    // Adiciona aos registros consolidados
+    setConsolidatedRooms(prev => {
+      const next = {
+        ...prev,
+        [activeSector.nome]: {
+          protocolo: `ASPEC-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
+          parecer: 'Auditado e conferido 100% in loco com download de espelho contábil',
+          data: new Date().toISOString()
+        }
+      };
+      try {
+        localStorage.setItem('cpsms_room_consolidated', JSON.stringify(next));
+      } catch (e) {
+        console.warn(e);
+      }
+      return next;
+    });
+
+    // 4. Gerar e baixar imediatamente o arquivo PDF oficial com o confronto Físico vs ASPEC
+    let pdfResult: { filename: string; isAllOk: boolean } | null = null;
+    try {
+      pdfResult = downloadAspecRoomPdf({
+        sector: activeSector,
+        unit: activeUnitInfo,
+        assets,
+        currentProfile
+      });
+    } catch (err) {
+      console.error('Erro ao gerar/baixar PDF oficial da sala:', err);
+    }
+
+    // 5. Feedback detalhado com status de conformidade
+    if (pdfResult) {
+      const statusTitle = pdfResult.isAllOk
+        ? '✓ SALA 100% DE ACORDO COM O ASPEC'
+        : '⚠️ DIVERGÊNCIAS REGISTRADAS (ENTRADAS / SAÍDAS)';
+      setBulkFeedback(
+        `Sala "${activeSector.nome}" concluída com sucesso! ${statusTitle}. O arquivo PDF oficial (${pdfResult.filename}) foi baixado automaticamente com o espelho contábil!`
+      );
+    } else {
+      setBulkFeedback(
+        `Sucesso! A sala "${activeSector.nome}" foi marcada como revisada. Todos os itens foram consolidados e o status visual do Mapa Geral foi atualizado!`
+      );
+    }
+    setTimeout(() => setBulkFeedback(null), 8000);
   };
 
   // Mark room as having an active physical conference draft
@@ -714,6 +803,42 @@ export const AuditView: React.FC<AuditViewProps> = ({
 
     setBulkFeedback(`OK Oficial confirmado pela Gestora! Baixa processada no ASPEC e dados unificados com sucesso na sala "${targetRoom}".`);
     setTimeout(() => setBulkFeedback(null), 8000);
+  };
+
+  // Batch & Individual update of asset responsibles
+  const handleSaveRoomResponsibles = (updates: { assetId: string; responsavelNome: string; responsavelCargo?: string }[]) => {
+    updates.forEach(u => {
+      const existingAsset = assets.find(a => a.id === u.assetId);
+      if (existingAsset) {
+        const updated: Asset = {
+          ...existingAsset,
+          responsavelNome: u.responsavelNome,
+          responsavelCargo: u.responsavelCargo || existingAsset.responsavelCargo,
+        };
+        if (onUpdateAsset) {
+          onUpdateAsset(updated);
+        }
+      }
+    });
+    setBulkFeedback(`Sucesso! Responsáveis pelos bens da sala "${activeSector?.nome}" atualizados e salvos.`);
+    setTimeout(() => setBulkFeedback(null), 5000);
+  };
+
+  const handleSaveInlineResponsible = (asset: Asset) => {
+    if (!inlineResponsibleInput.trim()) {
+      setEditingAssetResponsibleId(null);
+      return;
+    }
+    const updated: Asset = {
+      ...asset,
+      responsavelNome: inlineResponsibleInput.trim(),
+    };
+    if (onUpdateAsset) {
+      onUpdateAsset(updated);
+    }
+    setEditingAssetResponsibleId(null);
+    setBulkFeedback(`Responsável pelo tombo ${asset.tombamento} definido para "${inlineResponsibleInput.trim()}"!`);
+    setTimeout(() => setBulkFeedback(null), 4000);
   };
 
   // Quick Action: Save an Untracked Asset found while inspecting this room
@@ -1417,73 +1542,89 @@ export const AuditView: React.FC<AuditViewProps> = ({
 
               {/* Sectors Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {unitSectorsList.map((sector, index) => (
-                  <button
-                    key={`sector-${sector.id}-${index}`}
-                    type="button"
-                    onClick={() => setSelectedSectorId(sector.id)}
-                    className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-emerald-500/80 bg-slate-50/60 dark:bg-slate-850 hover:bg-emerald-50/20 dark:hover:bg-emerald-950/20 text-left transition-all cursor-pointer group flex flex-col justify-between space-y-3"
-                  >
-                    <div>
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white group-hover:text-emerald-700 dark:group-hover:text-emerald-300 leading-snug">
-                          {sector.nome}
-                        </span>
-                        <div className="flex items-center gap-1 shrink-0">
-                          {roomDrafts[sector.nome] && (
-                            <span 
-                              className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-amber-400 text-amber-950 font-mono shadow-2xs"
-                              title="Sala possui alterações em rascunho de conferência pendentes de homologação oficial no ASPEC"
-                            >
-                              Rascunho
-                            </span>
-                          )}
-                          {consolidatedRooms[sector.nome] && (
-                            <span 
-                              className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-mono border border-emerald-300"
-                              title="Sala consolidada definitivamente no sistema com ASPEC oficializado"
-                            >
-                              ASPEC OK
-                            </span>
-                          )}
-                          <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-500 group-hover:translate-x-0.5 transition-transform" />
+                {unitSectorsList.map((sector, index) => {
+                  const isConferida = Boolean(sector.revisada || sector.percent === 100 || consolidatedRooms[sector.nome]);
+                  return (
+                    <button
+                      key={`sector-${sector.id}-${index}`}
+                      type="button"
+                      onClick={() => setSelectedSectorId(sector.id)}
+                      className={`p-4 rounded-xl border text-left transition-all cursor-pointer group flex flex-col justify-between space-y-3 ${
+                        isConferida
+                          ? 'border-emerald-300 dark:border-emerald-700/60 bg-emerald-50/50 dark:bg-emerald-950/20 hover:border-emerald-500'
+                          : 'border-slate-200 dark:border-slate-800 hover:border-emerald-500/80 bg-slate-50/60 dark:bg-slate-850 hover:bg-emerald-50/20 dark:hover:bg-emerald-950/20'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white group-hover:text-emerald-700 dark:group-hover:text-emerald-300 leading-snug">
+                            {sector.nome}
+                          </span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {isConferida ? (
+                              <span 
+                                className="text-[10px] uppercase font-black px-2 py-0.5 rounded-full bg-emerald-500 text-slate-950 font-mono shadow-xs flex items-center gap-1"
+                                title="Sala concluída, auditada e conferida no inventário físico"
+                              >
+                                <CheckCheck className="w-3 h-3 stroke-[3]" />
+                                <span>Conferida</span>
+                              </span>
+                            ) : roomDrafts[sector.nome] ? (
+                              <span 
+                                className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-amber-400 text-amber-950 font-mono shadow-2xs"
+                                title="Sala possui alterações em rascunho de conferência pendentes de homologação oficial no ASPEC"
+                              >
+                                Rascunho
+                              </span>
+                            ) : null}
+                            {consolidatedRooms[sector.nome] && !isConferida && (
+                              <span 
+                                className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-mono border border-emerald-300"
+                                title="Sala consolidada definitivamente no sistema com ASPEC oficializado"
+                              >
+                                ASPEC OK
+                              </span>
+                            )}
+                            <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-500 group-hover:translate-x-0.5 transition-transform" />
+                          </div>
+                        </div>
+
+                        {sector.responsavel && (
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1">
+                            <User className="w-3 h-3 text-slate-400 shrink-0" />
+                            <span className="truncate">{sector.responsavel}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="space-y-1.5 pt-2 border-t border-slate-200/60 dark:border-slate-800">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                            {sector.assetsCount} {sector.assetsCount === 1 ? 'bem' : 'bens'}
+                          </span>
+                          <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded font-mono ${
+                            isConferida 
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-black' 
+                              : sector.checkedCount > 0 
+                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                              : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-400'
+                          }`}>
+                            {isConferida ? '✓ ' : ''}
+                            {isConferida ? sector.assetsCount : sector.checkedCount} de {sector.assetsCount} conferidos ({isConferida ? 100 : sector.percent}%)
+                          </span>
+                        </div>
+
+                        {/* Progress bar per sector */}
+                        <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                          <div 
+                            className="bg-emerald-500 h-full rounded-full transition-all"
+                            style={{ width: `${isConferida ? 100 : sector.percent}%` }}
+                          />
                         </div>
                       </div>
-
-                      {sector.responsavel && (
-                        <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1">
-                          <User className="w-3 h-3 text-slate-400 shrink-0" />
-                          <span className="truncate">{sector.responsavel}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="space-y-1.5 pt-2 border-t border-slate-200/60 dark:border-slate-800">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                          {sector.assetsCount} {sector.assetsCount === 1 ? 'bem' : 'bens'}
-                        </span>
-                        <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded font-mono ${
-                          sector.percent === 100 
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' 
-                            : sector.checkedCount > 0 
-                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                            : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-400'
-                        }`}>
-                          {sector.checkedCount} de {sector.assetsCount} conferidos ({sector.percent}%)
-                        </span>
-                      </div>
-
-                      {/* Progress bar per sector */}
-                      <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                        <div 
-                          className="bg-emerald-500 h-full rounded-full transition-all"
-                          style={{ width: `${sector.percent}%` }}
-                        />
-                      </div>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
               </div>
 
               {unitSectorsList.length === 0 && (
@@ -1540,30 +1681,32 @@ export const AuditView: React.FC<AuditViewProps> = ({
 
                 {/* Top Action Buttons for this Room */}
                 <div className="flex items-center gap-2.5 flex-wrap">
-                  {/* FUNÇÃO OBRIGATÓRIA: CONCLUIR SALA */}
+                  {/* FUNÇÃO OBRIGATÓRIA: CONCLUIR SALA COM DOWNLOAD AUTOMÁTICO DE PDF */}
                   {!activeSector?.revisada ? (
                     <button
                       type="button"
-                      onClick={() => {
-                        if (activeSector) {
-                          if (onConcludeRoom) {
-                            onConcludeRoom(activeSector.id || activeSector.nome);
-                          }
-                          handleConfirmAllInSector();
-                          setBulkFeedback(`Sucesso! A sala "${activeSector.nome}" foi marcada como revisada. Todos os itens foram consolidados e o status visual do Mapa Geral foi atualizado!`);
-                          setTimeout(() => setBulkFeedback(null), 6000);
-                        }
-                      }}
+                      onClick={handleConcludeRoomWithPdf}
                       className="flex items-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-black bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl transition-all cursor-pointer shadow-md ring-2 ring-emerald-500/40 hover:scale-[1.02] active:scale-[0.98]"
-                      title="Concluir sala atual: marcar como revisada no sistema, consolidar todos os itens verificados e atualizar o mapa visual geral das unidades"
+                      title="Concluir sala atual: consolidar conferência, atualizar mapa e baixar automaticamente o arquivo PDF oficial com confronto Físico vs ASPEC"
                     >
                       <CheckCheck className="w-4 h-4 stroke-[3]" />
-                      <span>Concluir Sala</span>
+                      <span>Concluir Sala (Baixa PDF)</span>
                     </button>
                   ) : (
-                    <div className="flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-black bg-emerald-100 dark:bg-emerald-950/80 text-emerald-900 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700 rounded-xl">
-                      <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                      <span>Sala Revisada no Mapa</span>
+                    <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-black bg-emerald-100 dark:bg-emerald-950/80 text-emerald-900 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700 rounded-xl">
+                        <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                        <span>Sala Revisada</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleConcludeRoomWithPdf}
+                        className="flex items-center gap-1.5 px-3 py-2.5 text-xs sm:text-sm font-bold bg-slate-800 hover:bg-slate-700 text-white rounded-xl transition-all cursor-pointer shadow-xs border border-slate-700"
+                        title="Baixar novamente o PDF oficial com o espelho contábil da sala (Físico vs ASPEC)"
+                      >
+                        <Download className="w-4 h-4 text-emerald-400" />
+                        <span>Baixar PDF</span>
+                      </button>
                     </div>
                   )}
 
@@ -1598,6 +1741,17 @@ export const AuditView: React.FC<AuditViewProps> = ({
                   >
                     <FileText className="w-4 h-4 text-white" />
                     <span>Relatório para o ASPEC</span>
+                  </button>
+
+                  {/* DEFINIR RESPONSÁVEIS DOS BENS DA SALA */}
+                  <button
+                    type="button"
+                    onClick={() => setShowRoomResponsiblesModal(true)}
+                    className="flex items-center gap-1.5 px-4 py-2.5 text-xs sm:text-sm font-bold bg-teal-600 hover:bg-teal-500 text-white rounded-xl transition-all cursor-pointer shadow-xs ring-2 ring-teal-500/20"
+                    title="Cadastrar ou editar servidores responsáveis por cada equipamento desta sala (computador, mesa, armário, diretor)"
+                  >
+                    <Users className="w-4 h-4 text-white" />
+                    <span>Responsáveis por Bem</span>
                   </button>
 
                   {/* Add Untracked Asset Right in this Room */}
@@ -2146,7 +2300,77 @@ export const AuditView: React.FC<AuditViewProps> = ({
                                 <span>S/N: <strong className="font-mono text-slate-900 dark:text-white font-bold">{asset.numeroSerie}</strong></span>
                               )}
                               <span>Valor Contábil: <strong className="font-mono text-slate-900 dark:text-white">{formatBRL(asset.valorAquisicao || asset.valorBrutoContabil || 0)}</strong></span>
-                              <span>Responsável: <strong className="text-slate-900 dark:text-white">{asset.responsavelNome}</strong></span>
+                              {editingAssetResponsibleId === asset.id ? (
+                                <div className="flex items-center gap-1.5 flex-wrap p-2 bg-emerald-50 dark:bg-emerald-950/60 rounded-xl border border-emerald-300 dark:border-emerald-700 w-full sm:w-auto mt-1">
+                                  <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300">Responsável:</span>
+                                  <input
+                                    type="text"
+                                    value={inlineResponsibleInput}
+                                    onChange={(e) => setInlineResponsibleInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') handleSaveInlineResponsible(asset);
+                                      if (e.key === 'Escape') setEditingAssetResponsibleId(null);
+                                    }}
+                                    placeholder="Nome do servidor..."
+                                    className="px-2.5 py-1 text-xs rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 font-bold text-slate-900 dark:text-white"
+                                    autoFocus
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveInlineResponsible(asset)}
+                                    className="px-2.5 py-1 text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-lg cursor-pointer"
+                                  >
+                                    Salvar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingAssetResponsibleId(null)}
+                                    className="px-2 py-1 text-xs text-slate-500 hover:text-slate-700 cursor-pointer"
+                                  >
+                                    ✕
+                                  </button>
+                                  {activeSector?.responsavel && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setInlineResponsibleInput(activeSector.responsavel || '')}
+                                      className="px-1.5 py-0.5 text-[10px] rounded bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-800 dark:text-slate-200 cursor-pointer"
+                                    >
+                                      Líder
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => setInlineResponsibleInput('Diretor Geral')}
+                                    className="px-1.5 py-0.5 text-[10px] rounded bg-blue-100 dark:bg-blue-900/60 hover:bg-blue-200 text-blue-900 dark:text-blue-200 cursor-pointer"
+                                  >
+                                    Diretor
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setInlineResponsibleInput(currentProfile.nome)}
+                                    className="px-1.5 py-0.5 text-[10px] rounded bg-purple-100 dark:bg-purple-900/60 hover:bg-purple-200 text-purple-900 dark:text-purple-200 cursor-pointer"
+                                  >
+                                    Eu
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span>Responsável:</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingAssetResponsibleId(asset.id);
+                                      setInlineResponsibleInput(asset.responsavelNome || activeSector?.responsavel || '');
+                                    }}
+                                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-900 dark:text-white font-bold text-xs border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer group"
+                                    title="Clique para cadastrar ou alterar o responsável por este bem"
+                                  >
+                                    <User className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                                    <span>{asset.responsavelNome || 'Não atribuído'}</span>
+                                    <Edit3 className="w-3 h-3 text-slate-400 group-hover:text-emerald-600 ml-0.5" />
+                                  </button>
+                                </div>
+                              )}
                             </div>
 
                             {/* Audit Status Note */}
@@ -2280,7 +2504,18 @@ export const AuditView: React.FC<AuditViewProps> = ({
                             </h4>
                             <div className="text-[11px] text-slate-500 flex items-center gap-3">
                               <span>Valor: {formatBRL(asset.valorAquisicao || 0)}</span>
-                              <span>Resp: {asset.responsavelNome}</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingAssetResponsibleId(asset.id);
+                                  setInlineResponsibleInput(asset.responsavelNome || activeSector?.responsavel || '');
+                                }}
+                                className="inline-flex items-center gap-1 hover:text-emerald-600 dark:hover:text-emerald-400 cursor-pointer"
+                                title="Clique para alterar o responsável pelo bem"
+                              >
+                                <span>Resp: <strong>{asset.responsavelNome || 'Definir'}</strong></span>
+                                <Edit3 className="w-3 h-3" />
+                              </button>
                             </div>
                           </div>
 
@@ -2331,10 +2566,155 @@ export const AuditView: React.FC<AuditViewProps> = ({
                       Nenhum bem encontrado com os filtros atuais nesta sala.
                     </p>
                     <p className="text-xs">
-                      Alterne o filtro para "Todos os Bens" ou limpe o termo de busca.
+                      Clique em "+ Adicionar Tombo" para registrar bens físicos encontrados neste ambiente (ex: bancos, ferramentas, mangueiras, mesas).
                     </p>
                   </div>
                 )}
+              </div>
+
+              {/* ========================================================================= */}
+              {/* FINAL DA AUDITORIA DA SALA: CADASTRO DE RESPONSÁVEIS PELOS BENS */}
+              {/* ========================================================================= */}
+              <div className="mt-8 bg-gradient-to-br from-white to-slate-50 dark:from-slate-900 dark:to-slate-850 rounded-3xl border-2 border-slate-200 dark:border-slate-800 p-5 sm:p-7 shadow-xs space-y-5">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="px-3 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-900 dark:text-emerald-200 text-xs font-black uppercase tracking-wider border border-emerald-300 dark:border-emerald-700">
+                        Etapa Final da Sala · Guarda Patrimonial
+                      </span>
+                      <span className="text-xs text-slate-500 font-medium">
+                        Auditoria Sala a Sala
+                      </span>
+                    </div>
+
+                    <h3 className="text-base sm:text-xl font-black text-slate-900 dark:text-white flex items-center gap-2 mt-1">
+                      <Users className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                      <span>Definição de Responsáveis por Bem — {activeSector?.nome}</span>
+                    </h3>
+
+                    <p className="text-xs text-slate-600 dark:text-slate-400 max-w-3xl leading-relaxed">
+                      Depois de conferir os equipamentos e adicionar tombos, cadastre quem responde pela guarda individual de cada bem:
+                      computadores e mesas para os servidores usuários, armários para o líder setorial, e áreas como Jardim ou corredores sob a responsabilidade do Diretor Geral.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setShowRoomResponsiblesModal(true)}
+                      className="px-5 py-3 text-xs sm:text-sm font-black bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-2xl shadow-md transition-all cursor-pointer flex items-center gap-2 ring-2 ring-emerald-500/30 hover:scale-[1.02] active:scale-[0.98]"
+                      title="Abrir painel de cadastro de responsáveis individuais para cada equipamento desta sala"
+                    >
+                      <UserCheck className="w-4 h-4 stroke-[2.5]" />
+                      <span>Cadastrar Responsáveis dos Bens ({activeSectorAssets.length})</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowRoomAspecModal(true)}
+                      className="px-4 py-3 text-xs sm:text-sm font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
+                      title="Emitir relatório oficial para atualizar o ASPEC"
+                    >
+                      <FileText className="w-4 h-4 text-white" />
+                      <span>Emitir Termo ASPEC</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Resumo Rápido dos Responsáveis Atribuídos */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                  <div className="p-3.5 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                    <div>
+                      <span className="text-[11px] text-slate-500 block">Total de Bens na Sala:</span>
+                      <span className="text-lg font-black text-slate-900 dark:text-white font-mono">{activeSectorAssets.length}</span>
+                    </div>
+                    <Tag className="w-5 h-5 text-slate-400" />
+                  </div>
+
+                  <div className="p-3.5 bg-emerald-50/70 dark:bg-emerald-950/40 rounded-2xl border border-emerald-200 dark:border-emerald-800 flex items-center justify-between">
+                    <div>
+                      <span className="text-[11px] text-emerald-800 dark:text-emerald-300 block">Com Responsável Definido:</span>
+                      <span className="text-lg font-black text-emerald-700 dark:text-emerald-300 font-mono">
+                        {activeSectorAssets.filter(a => a.responsavelNome && a.responsavelNome !== 'Não atribuído' && a.responsavelNome !== 'Responsável Setorial').length}
+                      </span>
+                    </div>
+                    <UserCheck className="w-5 h-5 text-emerald-600" />
+                  </div>
+
+                  <div className="p-3.5 bg-amber-50/70 dark:bg-amber-950/40 rounded-2xl border border-amber-200 dark:border-amber-800 flex items-center justify-between">
+                    <div>
+                      <span className="text-[11px] text-amber-800 dark:text-amber-300 block">Líder Setorial da Sala:</span>
+                      <span className="text-xs font-bold text-amber-900 dark:text-amber-200 truncate max-w-[150px] block">
+                        {activeSector?.responsavel || 'Não cadastrado'}
+                      </span>
+                    </div>
+                    <Building2 className="w-5 h-5 text-amber-600" />
+                  </div>
+                </div>
+
+                {/* ========================================================================= */}
+                {/* PAINEL DE CONCLUSÃO DA SALA & BAIXA AUTOMÁTICA DO PDF (FÍSICO VS ASPEC) */}
+                {/* ========================================================================= */}
+                <div className="p-5 sm:p-6 rounded-3xl bg-slate-900 text-white border-2 border-emerald-500/40 shadow-xl space-y-4">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[10px] uppercase font-bold border border-emerald-500/40">
+                          Finalização Oficial da Sala
+                        </span>
+                        {activeSector?.revisada ? (
+                          <span className="px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-mono text-[10px] uppercase font-bold border border-blue-500/40">
+                            ✓ Sala Concluída no Mapa Geral
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono text-[10px] uppercase font-bold border border-amber-500/40">
+                            Pendente de Conclusão Oficial
+                          </span>
+                        )}
+                      </div>
+                      <h4 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+                        <FileCheck2 className="w-5 h-5 text-emerald-400" />
+                        <span>Concluir Sala & Baixar Relatório PDF Oficial (Físico vs ASPEC)</span>
+                      </h4>
+                      <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
+                        Ao clicar em Concluir, o sistema consolida as conferências, atualiza o mapa visual das unidades e 
+                        <strong> baixa imediatamente o arquivo PDF oficial</strong> com o confronto contábil: se estiver tudo OK emite o Termo Regular de Dispensa de Alteração, ou aponta as divergências (entradas, saídas e transferências) para a Contabilidade atualizar o ASPEC.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={handleConcludeRoomWithPdf}
+                        className="flex items-center justify-center gap-2 px-6 py-3.5 text-sm font-black bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-2xl transition-all cursor-pointer shadow-lg hover:scale-[1.02] active:scale-[0.98] ring-2 ring-emerald-400/40"
+                        title="Concluir sala e baixar o arquivo PDF oficial automaticamente"
+                      >
+                        <CheckCheck className="w-5 h-5 stroke-[2.5]" />
+                        <span>{activeSector?.revisada ? 'Re-emitir & Baixar PDF' : 'Concluir Sala & Baixar PDF'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowRoomAspecModal(true)}
+                        className="flex items-center justify-center gap-1.5 px-4 py-3.5 text-xs sm:text-sm font-bold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-2xl border border-slate-700 transition-colors cursor-pointer"
+                        title="Visualizar o espelho do ASPEC na tela"
+                      >
+                        <FileText className="w-4 h-4 text-emerald-400" />
+                        <span>Ver Relatório na Tela</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowRoomResponsiblesModal(true)}
+                        className="flex items-center justify-center gap-1.5 px-4 py-3.5 text-xs sm:text-sm font-bold bg-teal-800/60 hover:bg-teal-700/60 text-teal-200 rounded-2xl border border-teal-600/40 transition-colors cursor-pointer"
+                        title="Ajustar os servidores responsáveis de cada equipamento"
+                      >
+                        <Users className="w-4 h-4 text-teal-300" />
+                        <span>Responsáveis por Bem</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -3080,6 +3460,19 @@ export const AuditView: React.FC<AuditViewProps> = ({
           onSaveDraftOnly={handleSaveDraftOnly}
           onDiscardDraft={handleDiscardDraft}
           hasDraftActive={Boolean(roomDrafts[(activeComparingSector || activeSector)?.nome || ''])}
+        />
+      )}
+
+      {/* Modal de Atribuição de Responsáveis por Bem na Sala */}
+      {showRoomResponsiblesModal && activeSector && (
+        <RoomResponsiblesModal
+          isOpen={showRoomResponsiblesModal}
+          onClose={() => setShowRoomResponsiblesModal(false)}
+          sector={activeSector}
+          unit={activeUnitInfo}
+          assets={activeSectorAssets}
+          currentProfile={currentProfile}
+          onSaveResponsibles={handleSaveRoomResponsibles}
         />
       )}
 

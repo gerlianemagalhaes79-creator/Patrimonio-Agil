@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { NewLocationModal } from './NewLocationModal';
 import { buildUnitSubareas, getAssetUnitId } from '../utils/locationHelper';
+import { downloadAspecRoomPdf } from '../utils/aspecPdfGenerator';
 
 interface UnitsInteractiveMapProps {
   assets: Asset[];
@@ -146,7 +147,27 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
   // Função Concluir Sala
   const handleTriggerConcludeRoom = (sectorId: string, sectorName: string) => {
     onConcludeRoom(sectorId);
-    setActionFeedback(`Sucesso! A sala "${sectorName}" foi marcada como revisada. Todos os itens foram consolidados e o mapa visual foi atualizado.`);
+    
+    // Baixar automaticamente o PDF oficial da sala
+    const targetSector = sectors.find(s => s.id === sectorId || s.nome.trim().toLowerCase() === sectorName.trim().toLowerCase());
+    const currentUnit = units.find(u => u.id === selectedUnitId) || units[0];
+    let pdfRes: { filename: string; isAllOk: boolean } | null = null;
+    try {
+      pdfRes = downloadAspecRoomPdf({
+        sector: targetSector || { id: sectorId, nome: sectorName },
+        unit: currentUnit,
+        assets,
+        currentProfile
+      });
+    } catch (e) {
+      console.warn('PDF download err in map:', e);
+    }
+
+    if (pdfRes) {
+      setActionFeedback(`Sucesso! A sala "${sectorName}" foi concluída e o PDF (${pdfRes.filename}) foi baixado automaticamente!`);
+    } else {
+      setActionFeedback(`Sucesso! A sala "${sectorName}" foi marcada como revisada. Todos os itens foram consolidados e o mapa visual foi atualizado.`);
+    }
     setTimeout(() => setActionFeedback(null), 6000);
   };
 

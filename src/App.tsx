@@ -54,26 +54,76 @@ import { NewAssetModal } from './components/NewAssetModal';
 import { DataExchangeModal } from './components/DataExchangeModal';
 import { SmartImportModal } from './components/SmartImportModal';
 import { UnitsInteractiveMap } from './components/UnitsInteractiveMap';
+import { doesAssetMatchRoom, normalizeLoc } from './utils/locationHelper';
 
 export default function App() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [sectors, setSectors] = useState<Sector[]>(() => {
     try {
       const saved = localStorage.getItem('cpsms_custom_sectors');
+      const reviewedRaw = localStorage.getItem('cpsms_reviewed_rooms');
+      const reviewedMap: Record<string, any> = reviewedRaw ? JSON.parse(reviewedRaw) : {};
+
+      const map = new Map<string, Sector>();
+      CPSMS_SECTORS.forEach(s => {
+        const isRev = Boolean(
+          s.revisada || 
+          reviewedMap[s.id]?.revisada || 
+          reviewedMap[s.nome]?.revisada || 
+          reviewedMap[normalizeLoc(s.nome)]?.revisada
+        );
+        map.set(s.id, isRev ? { ...s, revisada: true } : s);
+      });
+
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Garante que todas as salas e setores oficiais do CPSMS_SECTORS estejam presentes,
-          // mesclando com quaisquer personalizações ou salas adicionais criadas pelo usuário.
-          const map = new Map<string, Sector>();
-          CPSMS_SECTORS.forEach(s => map.set(s.id, s));
           parsed.forEach((s: Sector) => {
             const existing = map.get(s.id);
-            map.set(s.id, existing ? { ...existing, ...s } : s);
+            const isRev = Boolean(
+              s.revisada || 
+              existing?.revisada || 
+              reviewedMap[s.id]?.revisada || 
+              reviewedMap[s.nome]?.revisada || 
+              reviewedMap[normalizeLoc(s.nome)]?.revisada
+            );
+            map.set(s.id, { ...(existing || {}), ...s, revisada: isRev });
           });
-          return Array.from(map.values());
         }
       }
+
+      // Add any reviewed rooms that might not have been in CPSMS_SECTORS
+      Object.entries(reviewedMap).forEach(([k, v]: [string, any]) => {
+        if (v && v.revisada) {
+          const roomName = v.nome || k;
+          const found = Array.from(map.values()).find(
+            s => s.id === k || normalizeLoc(s.nome) === normalizeLoc(roomName)
+          );
+          if (found) {
+            found.revisada = true;
+          } else {
+            const id = k.startsWith('room-') || k.startsWith('sub-') || k.startsWith('sec-') 
+              ? k 
+              : `sec-custom-${normalizeLoc(roomName).replace(/[^a-z0-9]/g, '-')}`;
+            map.set(id, {
+              id,
+              nome: roomName,
+              sigla: roomName.slice(0, 8).toUpperCase(),
+              unidadeId: 'policlinica',
+              unidadeNome: 'Policlínica',
+              responsavelNome: v.responsavelNome || 'Responsável Setorial',
+              responsavelCargo: v.responsavelCargo || 'Detentor da Carga',
+              responsavelMatricula: v.responsavelMatricula || 'CPSMS',
+              subsetores: [],
+              revisada: true,
+              dataRevisao: v.dataRevisao,
+              responsavelRevisao: v.responsavelRevisao
+            });
+          }
+        }
+      });
+
+      return Array.from(map.values());
     } catch (e) {
       console.warn('Error reading custom sectors from localStorage:', e);
     }
@@ -497,22 +547,69 @@ export default function App() {
     });
   };
 
+  const handleUpdateSector = (sectorIdOrName: string, updates: Partial<Sector>) => {
+    setSectors(prev => {
+      const normTarget = normalizeLoc(sectorIdOrName);
+      let found = false;
+      const updated = prev.map(s => {
+        if (s.id === sectorIdOrName || normalizeLoc(s.nome) === normTarget) {
+          found = true;
+          return { ...s, ...updates };
+        }
+        return s;
+      });
+
+      if (!found) {
+        const genId = sectorIdOrName.startsWith('sub-') || sectorIdOrName.startsWith('sec-') || sectorIdOrName.startsWith('room-')
+          ? sectorIdOrName
+          : `sec-custom-${normTarget.replace(/[^a-z0-9]/g, '-')}`;
+        updated.push({
+          id: genId,
+          nome: updates.nome || sectorIdOrName,
+          sigla: (updates.nome || sectorIdOrName).slice(0, 8).toUpperCase(),
+          unidadeId: updates.unidadeId || 'policlinica',
+          unidadeNome: updates.unidadeNome || 'Policlínica',
+          responsavelNome: updates.responsavelNome || 'Responsável Setorial',
+          responsavelCargo: updates.responsavelCargo || 'Detentor da Carga',
+          responsavelMatricula: updates.responsavelMatricula || 'CPSMS',
+          subsetores: updates.subsetores || [],
+          ...updates,
+        });
+      }
+
+      try {
+        localStorage.setItem('cpsms_custom_sectors', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Failed to save sectors to localStorage:', e);
+      }
+      return updated;
+    });
+  };
+
   const handleConcludeRoom = (sectorIdOrName: string) => {
     const t0 = performance.now();
     setIsProcessing(true);
 
     const targetSector = sectors.find(s => 
       s.id === sectorIdOrName || 
+      normalizeLoc(s.nome) === normalizeLoc(sectorIdOrName) ||
       s.nome.trim().toLowerCase() === sectorIdOrName.trim().toLowerCase()
     );
 
     const sectorName = targetSector ? targetSector.nome : sectorIdOrName;
     const sectorNameLower = sectorName.trim().toLowerCase();
+    const sectorNorm = normalizeLoc(sectorName);
 
-    // 1. Mark sector as reviewed
+    // 1. Mark sector as reviewed and persist
     setSectors(prev => {
+      let found = false;
       const updated = prev.map(s => {
-        if (s.id === sectorIdOrName || s.nome.trim().toLowerCase() === sectorNameLower) {
+        if (
+          s.id === sectorIdOrName || 
+          normalizeLoc(s.nome) === sectorNorm || 
+          s.nome.trim().toLowerCase() === sectorNameLower
+        ) {
+          found = true;
           return {
             ...s,
             revisada: true,
@@ -522,6 +619,27 @@ export default function App() {
         }
         return s;
       });
+
+      if (!found) {
+        const genId = sectorIdOrName.startsWith('sub-') || sectorIdOrName.startsWith('sec-') || sectorIdOrName.startsWith('room-')
+          ? sectorIdOrName
+          : `sec-custom-${sectorNorm.replace(/[^a-z0-9]/g, '-')}`;
+        updated.push({
+          id: genId,
+          nome: sectorName,
+          sigla: sectorName.slice(0, 8).toUpperCase(),
+          unidadeId: (targetSector?.unidadeId || 'policlinica') as any,
+          unidadeNome: targetSector?.unidadeNome || 'Policlínica',
+          responsavelNome: targetSector?.responsavelNome || 'Responsável Setorial',
+          responsavelCargo: targetSector?.responsavelCargo || 'Detentor da Carga',
+          responsavelMatricula: targetSector?.responsavelMatricula || 'CPSMS',
+          subsetores: [],
+          revisada: true,
+          dataRevisao: new Date().toISOString(),
+          responsavelRevisao: currentProfile.nome,
+        });
+      }
+
       try {
         localStorage.setItem('cpsms_custom_sectors', JSON.stringify(updated));
       } catch (e) {
@@ -530,14 +648,36 @@ export default function App() {
       return updated;
     });
 
-    // 2. Consolidate and mark checked all assets in this sector
-    const updatedAssets = assets.map(a => {
-      const aSetor = (a.setorNome || '').trim().toLowerCase();
-      const aEncontrado = (a.auditoria?.setorEncontrado || '').trim().toLowerCase();
-      const aOrig = (a.setorOriginalAspec || '').trim().toLowerCase();
-      const aId = a.setorId;
+    // 2. Persist in cpsms_reviewed_rooms registry
+    try {
+      const raw = localStorage.getItem('cpsms_reviewed_rooms');
+      const reviewedMap = raw ? JSON.parse(raw) : {};
+      const revData = {
+        revisada: true,
+        dataRevisao: new Date().toISOString(),
+        responsavelRevisao: currentProfile.nome,
+        nome: sectorName
+      };
+      reviewedMap[sectorName] = revData;
+      reviewedMap[sectorNorm] = revData;
+      if (sectorIdOrName) {
+        reviewedMap[sectorIdOrName] = revData;
+      }
+      localStorage.setItem('cpsms_reviewed_rooms', JSON.stringify(reviewedMap));
+    } catch (e) {
+      console.warn('Failed to save reviewed room to localStorage:', e);
+    }
 
-      if (aSetor === sectorNameLower || aEncontrado === sectorNameLower || aOrig === sectorNameLower || (targetSector && aId === targetSector.id)) {
+    // 3. Consolidate and mark checked ALL assets in this sector
+    const updatedAssets = assets.map(a => {
+      const isMatch = doesAssetMatchRoom(a, sectorName) || 
+                      doesAssetMatchRoom(a, sectorIdOrName) ||
+                      (a.setorNome && normalizeLoc(a.setorNome) === sectorNorm) ||
+                      (a.subarea && normalizeLoc(a.subarea) === sectorNorm) ||
+                      (a.subsetorNome && normalizeLoc(a.subsetorNome) === sectorNorm) ||
+                      (targetSector && a.setorId === targetSector.id);
+
+      if (isMatch) {
         const audited: Asset = {
           ...a,
           auditoria: {
@@ -546,7 +686,7 @@ export default function App() {
             dataConferencia: a.auditoria?.dataConferencia || new Date().toISOString(),
             responsavelConferencia: a.auditoria?.responsavelConferencia || currentProfile.nome,
             observacaoAuditoria: a.auditoria?.observacaoAuditoria || 'Sala concluída e conferida no inventário físico',
-            statusDivergencia: a.auditoria?.statusDivergencia || 'conforme',
+            statusDivergencia: a.auditoria?.statusDivergencia === 'nao_encontrado' ? 'nao_encontrado' : (a.auditoria?.statusDivergencia || 'conforme'),
             setorEncontrado: sectorName,
             unidadeEncontrada: targetSector?.unidadeNome || a.unidadeNome,
           }
@@ -796,6 +936,7 @@ export default function App() {
             onConsolidateRoom={handleConsolidateRoomOfficial}
             onRecordQueryDuration={(dur) => setLastQueryDurationMs(Math.max(1, Math.round(dur)))}
             onConcludeRoom={handleConcludeRoom}
+            onUpdateSector={handleUpdateSector}
           />
         )}
 

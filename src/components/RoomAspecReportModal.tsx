@@ -18,6 +18,7 @@ import {
   ShieldCheck
 } from 'lucide-react';
 import { doesAssetMatchRoom, doesAssetOfficiallyMatchRoom, doesAssetPhysicallyMatchRoom, getAssetFullLocation, getAssetOfficialRoomName } from '../utils/locationHelper';
+import { downloadAspecRoomPdf } from '../utils/aspecPdfGenerator';
 
 interface RoomAspecReportModalProps {
   isOpen: boolean;
@@ -534,6 +535,30 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                try {
+                  const res = downloadAspecRoomPdf({
+                    sector,
+                    unit,
+                    assets,
+                    currentProfile
+                  });
+                  setStatusMsg(`✓ Arquivo PDF baixado com sucesso: ${res.filename}`);
+                  setTimeout(() => setStatusMsg(null), 5000);
+                } catch (e) {
+                  console.error(e);
+                  setStatusMsg('Erro ao gerar PDF direto. Utilize o botão Imprimir / Salvar PDF.');
+                }
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors cursor-pointer shadow-xs"
+              title="Baixar arquivo PDF com confronto Físico vs ASPEC diretamente para o seu computador"
+            >
+              <Download className="w-4 h-4 text-white" />
+              <span>Baixar PDF (.pdf)</span>
+            </button>
+
             <button
               type="button"
               onClick={handlePrint}
