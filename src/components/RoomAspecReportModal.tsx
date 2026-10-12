@@ -17,6 +17,7 @@ import {
   FileText,
   ShieldCheck
 } from 'lucide-react';
+import { doesAssetMatchRoom, doesAssetOfficiallyMatchRoom, doesAssetPhysicallyMatchRoom, getAssetFullLocation, getAssetOfficialRoomName } from '../utils/locationHelper';
 
 interface RoomAspecReportModalProps {
   isOpen: boolean;
@@ -42,16 +43,14 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
   const sectorCargo = (sector && 'responsavelCargo' in sector) ? sector.responsavelCargo : 'Responsável pelo Setor';
   const sectorNameNormalized = sector?.nome ? sector.nome.trim().toLowerCase() : '';
 
-  // 1. Bens que estavam cadastrados no ASPEC nesta sala
+  // 1. Bens que estavam cadastrados no ASPEC nesta sala / subárea
   const aspecRegisteredAssets = useMemo(() => {
     if (!sector) return [];
     return assets.filter(a => {
-      const sNome = (a.setorNome || '').trim().toLowerCase();
-      const sArea = (a.area || '').trim().toLowerCase();
-      const sSub = (a.subsetorNome || a.subarea || '').trim().toLowerCase();
-      return sNome === sectorNameNormalized || sArea === sectorNameNormalized || sSub === sectorNameNormalized;
+      if (a.foraDoAspec) return false;
+      return doesAssetOfficiallyMatchRoom(a, sectorName);
     });
-  }, [assets, sectorNameNormalized]);
+  }, [assets, sectorName]);
 
   // 1.1 Bens confirmados presentes (com OK)
   const confirmedPresent = useMemo(() => {
@@ -66,15 +65,20 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
   // 2. Bens que foram achados fisicamente nesta sala mas estavam no ASPEC em outro lugar (ou fora do ASPEC)
   const physicalFindingsInRoom = useMemo(() => {
     return assets.filter(a => {
-      const originalSetor = (a.setorOriginalAspec || a.setorNome || '').trim().toLowerCase();
-      const setorEncontrado = (a.auditoria?.setorEncontrado || '').trim().toLowerCase();
-      // Encontrado aqui, mas não era daqui no ASPEC
-      const isFoundHere = setorEncontrado === sectorNameNormalized;
-      const isNotOriginalHere = originalSetor !== sectorNameNormalized;
-      const isDivergentFoundHere = a.auditoria?.statusDivergencia === 'setor_divergente' && isFoundHere;
-      return (isFoundHere && isNotOriginalHere) || isDivergentFoundHere || (a.foraDoAspec && isFoundHere);
+      const isMissing = a.auditoria?.statusDivergencia === 'nao_encontrado';
+      if (isMissing) return false;
+
+      const isAuditedHere = doesAssetPhysicallyMatchRoom(a, sectorName);
+      const isOriginallyHere = doesAssetOfficiallyMatchRoom(a, sectorName);
+
+      if (a.foraDoAspec && isAuditedHere) return true;
+      if (isAuditedHere && !isOriginallyHere) return true;
+      return false;
     });
-  }, [assets, sectorNameNormalized]);
+  }, [assets, sectorName]);
+
+  // Validação: Sala 100% OK e conforme com o ASPEC?
+  const isRoomAllOk = markedMissing.length === 0 && physicalFindingsInRoom.length === 0 && aspecRegisteredAssets.length > 0;
 
   // Bens sem plaqueta encontrados na sala
   const semPlaquetaItems = useMemo(() => {
@@ -87,19 +91,133 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
     const currentDateFormatted = now.toLocaleDateString('pt-BR');
     const currentTimeFormatted = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-    return `<!DOCTYPE html>
+    // CASO A: SALA 100% OK / CONFORME COM O ASPEC -> TERMO REGULAR
+    if (isRoomAllOk) {
+      return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Termo de Vistoria e Espelho ASPEC — ${sectorName}</title>
+  <title>Termo de Conferência Patrimonial Regular — ${sectorName} — ASPEC</title>
   <style>
-    @page { size: A4 portrait; margin: 12mm 12mm 12mm 12mm; }
+    @page { size: A4 portrait; margin: 12mm; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; color: #0f172a; line-height: 1.4; padding: 15px; margin: 0; background: #fff; font-size: 11px; }
     .header { text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 8px; margin-bottom: 12px; }
     .gov { font-size: 10px; font-weight: bold; text-transform: uppercase; color: #475569; }
     .org { font-size: 13px; font-weight: 900; text-transform: uppercase; color: #0f172a; margin-top: 2px; }
     .unit { font-size: 11px; font-weight: bold; color: #2563eb; margin-top: 1px; }
-    .title-box { background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 4px; text-align: center; font-weight: 900; font-size: 12px; text-transform: uppercase; margin: 10px 0; }
+    .title-box { background: #ecfdf5; border: 2px solid #10b981; padding: 10px 14px; border-radius: 6px; text-align: center; font-weight: 900; font-size: 13px; text-transform: uppercase; margin: 12px 0; color: #065f46; }
+    .stamp-box { background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; font-size: 11px; color: #166534; }
+    .meta-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 10px; background: #f8fafc; border: 1px solid #e2e8f0; padding: 8px; border-radius: 4px; margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 9.5px; margin-bottom: 12px; }
+    th { background: #0f172a; color: white; border: 1px solid #334155; padding: 6px; text-align: left; text-transform: uppercase; font-size: 9px; }
+    td { border: 1px solid #cbd5e1; padding: 6px; vertical-align: top; }
+    tr:nth-child(even) { background: #f8fafc; }
+    .tag-ok { color: #065f46; background: #d1fae5; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 9px; display: inline-block; }
+    .certification { background: #f8fafc; border-left: 4px solid #10b981; padding: 10px 14px; font-size: 10.5px; margin: 16px 0; line-height: 1.5; }
+    .signatures { margin-top: 30px; page-break-inside: avoid; }
+    .sig-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 30px; text-align: center; font-size: 10px; }
+    .sig-line { border-bottom: 1px solid #0f172a; margin-bottom: 6px; padding-bottom: 30px; }
+    .no-print { margin-bottom: 12px; display: flex; gap: 8px; justify-content: flex-end; }
+    .btn { background: #10b981; color: #0f172a; border: none; padding: 6px 14px; font-weight: bold; border-radius: 4px; cursor: pointer; font-size: 11px; }
+    @media print { .no-print { display: none !important; } body { padding: 0; } }
+  </style>
+</head>
+<body>
+  <div class="no-print">
+    <button class="btn" onclick="window.print()">🖨️ Imprimir / Salvar PDF (A4)</button>
+  </div>
+
+  <div class="header">
+    <div class="gov">ESTADO DO CEARÁ · CONSÓRCIO PÚBLICO DE SAÚDE DA MICRORREGIÃO DE SOBRAL — CPSMS</div>
+    <div class="org">GERÊNCIA DE PATRIMÔNIO · COMISSÃO DE INVENTÁRIO 2026</div>
+    <div class="unit">${unit.nome.toUpperCase()}</div>
+  </div>
+
+  <div class="title-box">
+    TERMO DE CONFERÊNCIA PATRIMONIAL REGULAR — SALA 100% DE ACORDO COM O ASPEC
+  </div>
+
+  <div class="stamp-box">
+    <strong>✓ SALA ATESTADA 100% REGULARIZADA NO ASPEC:</strong><br />
+    Todos os <strong>${aspecRegisteredAssets.length}</strong> bens cadastrados nesta sala no sistema ASPEC foram localizados e conferidos fisicamente in loco em perfeito estado. Não houve saídas de bens, não houve transferências de outros ambientes e não há itens sem registro contábil neste ambiente.
+    <div style="font-weight:bold;margin-top:3px;color:#065f46;">
+      SITUAÇÃO CONTÁBIL: DISPENSA QUALQUER ALTERAÇÃO OU MOVIMENTAÇÃO DE CARGA NO ASPEC.
+    </div>
+  </div>
+
+  <div class="meta-grid">
+    <div><strong>Ambiente / Sala:</strong> 📍 ${sectorName}</div>
+    <div><strong>Unidade Gestora:</strong> ${unit.nome} (${unit.sigla})</div>
+    <div><strong>Data da Conferência:</strong> ${currentDateFormatted} às ${currentTimeFormatted}</div>
+    <div><strong>Responsável pela Vistoria:</strong> ${currentProfile.nome}</div>
+    <div><strong>Cargo / Função:</strong> ${currentProfile.cargo || 'Gestora de Patrimônio'}</div>
+    <div><strong>Carga Oficial no ASPEC:</strong> ${aspecRegisteredAssets.length} bens (${formatBRL(aspecRegisteredAssets.reduce((s, a) => s + (a.valorAquisicao || 0), 0))})</div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 75px;">Tombo</th>
+        <th style="width: 75px;">SESA (6d)</th>
+        <th>Descrição do Bem Patrimonial</th>
+        <th style="width: 90px; text-align: center;">Estado</th>
+        <th style="width: 85px; text-align: right;">Valor (R$)</th>
+        <th style="width: 105px; text-align: center;">Situação no ASPEC</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${aspecRegisteredAssets.map(a => `
+        <tr>
+          <td style="font-family: monospace; font-weight: bold;">${a.tombamento}</td>
+          <td style="font-family: monospace; color: #1d4ed8;">${a.tomboOrigemSesa || '—'}</td>
+          <td><strong>${a.descricao}</strong></td>
+          <td style="text-align: center;">${a.estado}</td>
+          <td style="text-align: right; font-family: monospace;">${formatBRL(a.valorAquisicao || 0)}</td>
+          <td style="text-align: center;"><span class="tag-ok">✓ 100% CONFORME</span></td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+
+  <div class="certification">
+    <strong>PARECER CONCLUSIVO DA COMISSÃO DE INVENTÁRIO:</strong><br />
+    Certifico para os devidos fins de controle interno, prestação de contas junto aos órgãos fiscalizadores e consolidação do inventário anual do CPSMS, que a sala <strong>"${sectorName}"</strong> encontra-se em total conformidade com a base contábil do sistema ASPEC, permanecendo inalterada a sua carga patrimonial.
+  </div>
+
+  <div class="signatures">
+    <div class="sig-grid">
+      <div>
+        <div class="sig-line"></div>
+        <strong>${currentProfile.nome}</strong><br />
+        Gestora de Patrimônio / Presidente da Comissão<br />
+        CPSMS
+      </div>
+      <div>
+        <div class="sig-line"></div>
+        <strong>${sectorResponsavel || 'Responsável Setorial'}</strong><br />
+        ${sectorCargo}<br />
+        Atesto de Presença e Guarda dos Bens
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+    }
+
+    // CASO B: SALA COM DIVERGÊNCIAS (ENTRADAS DE OUTRAS SALAS, SAÍDAS OU FORA DO ASPEC)
+    return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Relatório de Movimentação para o ASPEC — ${sectorName}</title>
+  <style>
+    @page { size: A4 portrait; margin: 12mm; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; color: #0f172a; line-height: 1.4; padding: 15px; margin: 0; background: #fff; font-size: 11px; }
+    .header { text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 8px; margin-bottom: 12px; }
+    .gov { font-size: 10px; font-weight: bold; text-transform: uppercase; color: #475569; }
+    .org { font-size: 13px; font-weight: 900; text-transform: uppercase; color: #0f172a; margin-top: 2px; }
+    .unit { font-size: 11px; font-weight: bold; color: #2563eb; margin-top: 1px; }
+    .title-box { background: #fff7ed; border: 2px solid #ea580c; padding: 8px 12px; border-radius: 4px; text-align: center; font-weight: 900; font-size: 12px; text-transform: uppercase; margin: 10px 0; color: #9a3412; }
     .meta-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 10px; background: #f1f5f9; border: 1px solid #e2e8f0; padding: 8px; border-radius: 4px; margin-bottom: 12px; }
     .summary-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
     .card { padding: 8px; border-radius: 4px; text-align: center; border: 1px solid #cbd5e1; font-size: 10px; }
@@ -121,10 +239,7 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
     .sig-line { border-bottom: 1px solid #0f172a; margin-bottom: 6px; padding-bottom: 30px; }
     .no-print { margin-bottom: 12px; display: flex; gap: 8px; justify-content: flex-end; }
     .btn { background: #10b981; color: #0f172a; border: none; padding: 6px 14px; font-weight: bold; border-radius: 4px; cursor: pointer; font-size: 11px; }
-    @media print {
-      .no-print { display: none !important; }
-      body { padding: 0; }
-    }
+    @media print { .no-print { display: none !important; } body { padding: 0; } }
   </style>
 </head>
 <body>
@@ -139,7 +254,7 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
   </div>
 
   <div class="title-box">
-    TERMO DE VISTORIA SALA A SALA & ESPELHO DE ALTERAÇÕES NO ASPEC
+    RELATÓRIO DE MOVIMENTAÇÃO PATRIMONIAL PARA ATUALIZAÇÃO NO SISTEMA ASPEC
   </div>
 
   <div class="meta-grid">
@@ -152,27 +267,27 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
   </div>
 
   <div class="summary-cards">
-    <div class="card card-ok">
-      <span class="card-num">${confirmedPresent.length}</span>
-      <strong>BENS CONFORMES (COM OK)</strong><br />
-      Presença física confirmada no local. Mantém no ASPEC sem alteração.
-    </div>
     <div class="card card-in">
       <span class="card-num">${physicalFindingsInRoom.length}</span>
-      <strong>ENTRADAS NO ASPEC NESTA SALA</strong><br />
-      Achados físicos na sala. Requer transferência ou inclusão no ASPEC.
+      <strong>ENTRADAS NESTA SALA</strong><br />
+      Bens que entraram. Requer transferência de outra sala ou inclusão no ASPEC.
     </div>
     <div class="card card-out">
       <span class="card-num">${markedMissing.length}</span>
-      <strong>SAÍDAS / NÃO VISTOS (COM X)</strong><br />
-      Constavam no documento, mas não estão na sala. Em apuração.
+      <strong>SAÍDAS DESTA SALA</strong><br />
+      Bens que saíram (não vistos aqui). Em apuração nas demais salas.
+    </div>
+    <div class="card card-ok">
+      <span class="card-num">${confirmedPresent.length}</span>
+      <strong>BENS MANTIDOS (OK)</strong><br />
+      Presença física confirmada no local. Mantém no ASPEC sem alteração.
     </div>
   </div>
 
   <!-- TABELA 1: ENTRADAS / TRANSFERÊNCIAS PARA ESTA SALA -->
   <div class="section-title">
-    <span>1. O Que Dar Entrada no ASPEC para esta Sala (Bens Encontrados Fisicamente Aqui)</span>
-    <span>${physicalFindingsInRoom.length} item(ns)</span>
+    <span>1. O Que Dar Entrada no ASPEC para esta Sala (${physicalFindingsInRoom.length} item(ns))</span>
+    <span>Bens Encontrados Fisicamente Aqui</span>
   </div>
   ${physicalFindingsInRoom.length > 0 ? `
     <table>
@@ -181,12 +296,14 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
           <th style="width: 75px;">Tombo</th>
           <th style="width: 75px;">SESA (6d)</th>
           <th>Descrição do Bem Físico</th>
-          <th style="width: 140px;">Onde Constava no ASPEC</th>
+          <th style="width: 170px;">Onde Constava no ASPEC (Origem)</th>
           <th>Ação Exata a Fazer no Sistema ASPEC</th>
         </tr>
       </thead>
       <tbody>
-        ${physicalFindingsInRoom.map(a => `
+        ${physicalFindingsInRoom.map(a => {
+          const fullLoc = getAssetFullLocation(a);
+          return `
           <tr>
             <td style="font-family: monospace; font-weight: bold;">${a.tombamento}</td>
             <td style="font-family: monospace; color: #1d4ed8;">${a.tomboOrigemSesa || '—'}</td>
@@ -196,25 +313,26 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
               ${a.numeroSerie ? `<br /><span style="color:#64748b;font-size:8.5px;">S/N: ${a.numeroSerie}</span>` : ''}
             </td>
             <td style="background: #fefce8; color: #854d0e; font-weight: 600;">
-              ${a.foraDoAspec && !a.setorOriginalAspec ? 'NÃO CONSTAVA NO ASPEC' : `
-                <div style="font-size:9.5px;color:#78350f;"><strong>No ASPEC a localização é:</strong> ${a.setorOriginalAspec || a.setorNome}</div>
-                <div style="font-size:9.5px;color:#065f46;margin-top:2px;"><strong>No sistema/físico está na sala:</strong> ${sectorName}</div>
+              ${a.foraDoAspec ? 'NÃO CONSTAVA NO ASPEC (ACHADO FÍSICO)' : `
+                <div style="font-size:9.5px;color:#78350f;">
+                  <strong>Já consta no ASPEC na localização:</strong><br/>
+                  Área: <strong>${fullLoc.area}</strong><br/>
+                  Subárea / Sala: <strong>${fullLoc.subarea}</strong>
+                </div>
               `}
             </td>
             <td>
-              ${a.foraDoAspec && !a.setorOriginalAspec ? `
-                <span class="tag-incluir">[INCLUSÃO CONTÁBIL]</span><br />
+              ${a.foraDoAspec ? `
+                <span class="tag-incluir">[INCLUSÃO CONTÁBIL / NOVO TOMBO]</span><br />
                 Cadastrar no ASPEC com carga no <strong>${sectorName}</strong>.
               ` : `
                 <span class="tag-transf">[TRANSFERÊNCIA INTERNA DE CARGA]</span><br />
-                No ASPEC a localização é "<strong>${a.setorOriginalAspec || a.setorNome}</strong>" e no sistema/físico está na sala conferida "<strong>${sectorName}</strong>".<br />
-                ${a.statusRegularizacaoAspec === 'oficializado'
-                  ? '<span style="color:#065f46;font-weight:bold;">✓ Oficializado: Baixa e transferência homologadas pela Gestora com dados unificados.</span>'
-                  : '<span style="color:#b45309;font-weight:bold;">⏳ Localização Provisória: Registro definitivo nesta sala aguarda confirmação de baixa/mudança definitiva no ASPEC pela Gestora (OK Oficial).</span>'}
+                Transferir carga no ASPEC da sala "<strong>${fullLoc.subarea}</strong>" (${fullLoc.area}) para a sala atual "<strong>${sectorName}</strong>".
               `}
             </td>
           </tr>
-        `).join('')}
+          `;
+        }).join('')}
       </tbody>
     </table>
   ` : `
@@ -223,8 +341,8 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
 
   <!-- TABELA 2: SAÍDAS / BENS COM X (NÃO ENCONTRADOS NESTA SALA) -->
   <div class="section-title" style="margin-top: 16px;">
-    <span>2. O Que Retirar ou Apurar no ASPEC desta Sala (Bens que Constavam no Papel mas Não Estão Aqui)</span>
-    <span>${markedMissing.length} item(ns)</span>
+    <span>2. O Que Retirar ou Apurar no ASPEC desta Sala (${markedMissing.length} item(ns))</span>
+    <span>Bens que Constavam no Papel mas Saíram / Não Estão Aqui</span>
   </div>
   ${markedMissing.length > 0 ? `
     <table>
@@ -243,10 +361,10 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
             <td style="font-family: monospace; font-weight: bold;">${a.tombamento}</td>
             <td style="font-family: monospace; color: #1d4ed8;">${a.tomboOrigemSesa || '—'}</td>
             <td><strong>${a.descricao}</strong></td>
-            <td style="background: #fef2f2; color: #991b1b; font-weight: 600;">Lotação Original nesta Sala</td>
+            <td style="background: #fef2f2; color: #991b1b; font-weight: 600;">Lotação Original nesta Sala (${sectorName})</td>
             <td>
-              <span class="tag-apurar">[EM APURAÇÃO / AGUARDAR OUTRAS SALAS]</span><br />
-              NÃO dar baixa agora. Se for encontrado em outra sala durante a vistoria, o sistema gerará a transferência correspondente.
+              <span class="tag-apurar">[EM APURAÇÃO / AGUARDAR DEMAIS SALAS]</span><br />
+              NÃO dar baixa imediata. Se for localizado em outra sala durante a vistoria, o sistema gerará a transferência correspondente.
             </td>
           </tr>
         `).join('')}
@@ -277,7 +395,7 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
         <div class="sig-line"></div>
         <strong>Setor de Contabilidade / Sistema ASPEC</strong><br />
         Responsável pelo Lançamento das Alterações<br />
-        [ &nbsp; ] Lançamentos Executados no ASPEC
+        [ &nbsp; ] Lançamentos Executados no ASPEC em _____/_____/_________
       </div>
     </div>
   </div>
@@ -288,9 +406,11 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
   const handlePrint = () => {
     const html = generatePrintableHtml();
     executePrintHtml({
-      title: `Termo de Vistoria e Espelho ASPEC — ${sectorName}`,
+      title: isRoomAllOk
+        ? `Termo de Conferência Regular — ${sectorName}`
+        : `Relatório de Movimentação ASPEC — ${sectorName}`,
       html,
-      filename: `termo_aspec_${sectorName.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.html`,
+      filename: `relatorio_aspec_${sectorName.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.html`,
       onStatus: (st) => {
         if (st) {
           setStatusMsg(st.message);
@@ -307,44 +427,84 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
       'Nº Tombo',
       'Tombo SESA (se houver)',
       'Descrição do Bem',
-      'Onde Constava no ASPEC',
-      'Onde Está Fisicamente',
+      'Onde Constava no ASPEC (Origem)',
+      'Onde Está Fisicamente (Destino)',
       'AÇÃO EXATA A FAZER NO ASPEC'
     ];
 
     const rows: string[][] = [];
 
-    // Entradas
-    physicalFindingsInRoom.forEach(a => {
-      rows.push([
-        `"${sectorName}"`,
-        '"ENTRADA NO ASPEC (TRANSFERÊNCIA / INCLUSÃO)"',
-        `"${a.tombamento}"`,
-        `"${a.tomboOrigemSesa || ''}"`,
-        `"${a.descricao.replace(/"/g, '""')}"`,
-        `"${a.foraDoAspec && !a.setorOriginalAspec ? 'NÃO CONSTAVA NO ASPEC' : (a.setorOriginalAspec || a.setorNome)}"`,
-        `"${sectorName}"`,
-        `"${a.foraDoAspec && !a.setorOriginalAspec ? `Incluir no ASPEC com carga em ${sectorName}` : `Transferir carga no ASPEC de ${a.setorOriginalAspec || a.setorNome} para ${sectorName}`}"`
-      ]);
-    });
+    if (isRoomAllOk) {
+      // Sala toda regular
+      confirmedPresent.forEach(a => {
+        const fullLoc = getAssetFullLocation(a);
+        rows.push([
+          `"${sectorName}"`,
+          '"CONFORME / REGULAR NO ASPEC"',
+          `"${a.tombamento}"`,
+          `"${a.tomboOrigemSesa || ''}"`,
+          `"${a.descricao.replace(/"/g, '""')}"`,
+          `"${fullLoc.full}"`,
+          `"${sectorName}"`,
+          '"MANTER NO ASPEC SEM ALTERAÇÃO (SALA 100% REGULAR)"'
+        ]);
+      });
+    } else {
+      // Entradas (transferências de outra sala ou novos cadastros)
+      physicalFindingsInRoom.forEach(a => {
+        const fullLoc = getAssetFullLocation(a);
+        const originDesc = a.foraDoAspec 
+          ? 'NÃO CONSTAVA NO ASPEC (ACHADO FÍSICO)' 
+          : `Área: ${fullLoc.area} · Subárea / Sala: ${fullLoc.subarea}`;
+        const acaoDesc = a.foraDoAspec 
+          ? `Incluir no ASPEC com carga em "${sectorName}"` 
+          : `Transferir carga no ASPEC da sala "${fullLoc.subarea}" (${fullLoc.area}) para a sala atual "${sectorName}"`;
+        rows.push([
+          `"${sectorName}"`,
+          `"ENTRADA NO ASPEC (${a.foraDoAspec ? 'NOVO CADASTRO' : 'TRANSFERÊNCIA'})"`,
+          `"${a.tombamento}"`,
+          `"${a.tomboOrigemSesa || ''}"`,
+          `"${a.descricao.replace(/"/g, '""')}"`,
+          `"${originDesc}"`,
+          `"${sectorName}"`,
+          `"${acaoDesc}"`
+        ]);
+      });
 
-    // Saídas
-    markedMissing.forEach(a => {
-      rows.push([
-        `"${sectorName}"`,
-        '"SAÍDA NO ASPEC (EM APURAÇÃO / NÃO VISTO)"',
-        `"${a.tombamento}"`,
-        `"${a.tomboOrigemSesa || ''}"`,
-        `"${a.descricao.replace(/"/g, '""')}"`,
-        `"${sectorName}"`,
-        '"NÃO ENCONTRADO NESTA SALA"',
-        '"Em apuração; aguardar vistoria das outras salas antes de baixar no ASPEC"'
-      ]);
-    });
+      // Saídas (itens não localizados)
+      markedMissing.forEach(a => {
+        const fullLoc = getAssetFullLocation(a);
+        rows.push([
+          `"${sectorName}"`,
+          '"SAÍDA NO ASPEC (NÃO LOCALIZADO / EM APURAÇÃO)"',
+          `"${a.tombamento}"`,
+          `"${a.tomboOrigemSesa || ''}"`,
+          `"${a.descricao.replace(/"/g, '""')}"`,
+          `"${fullLoc.full}"`,
+          '"NÃO LOCALIZADO NESTA SALA"',
+          '"Em apuração contábil; aguardar vistoria das demais salas antes de baixar no ASPEC"'
+        ]);
+      });
+
+      // Conformes mantidos
+      confirmedPresent.forEach(a => {
+        const fullLoc = getAssetFullLocation(a);
+        rows.push([
+          `"${sectorName}"`,
+          '"CONFORME (MANTIDO NA SALA)"',
+          `"${a.tombamento}"`,
+          `"${a.tomboOrigemSesa || ''}"`,
+          `"${a.descricao.replace(/"/g, '""')}"`,
+          `"${fullLoc.full}"`,
+          `"${sectorName}"`,
+          '"Manter no ASPEC sem alteração"'
+        ]);
+      });
+    }
 
     const csvContent = headers.join(';') + '\n' + rows.map(r => r.join(';')).join('\n');
-    downloadCsvFile(csvContent, `ajustes_aspec_${sectorName.replace(/\s+/g, '_')}.csv`);
-    setStatusMsg('Planilha exportada com sucesso!');
+    downloadCsvFile(csvContent, `relatorio_aspec_${sectorName.replace(/\s+/g, '_')}.csv`);
+    setStatusMsg('Planilha para o ASPEC exportada com sucesso!');
     setTimeout(() => setStatusMsg(null), 4000);
   };
 
@@ -415,6 +575,23 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
         {/* Body */}
         <div className="printable-report-scroll-container overflow-y-auto flex-1 p-4 sm:p-6 space-y-5 text-xs text-slate-800 dark:text-slate-200">
           
+          {isRoomAllOk ? (
+            <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border-2 border-emerald-500 text-emerald-950 dark:text-emerald-200 space-y-1">
+              <div className="flex items-center gap-2 font-black text-sm text-emerald-800 dark:text-emerald-300">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                <span>SALA 100% CONFORME COM O ASPEC — SEM DIVERGÊNCIAS</span>
+              </div>
+              <p className="text-xs text-emerald-900 dark:text-emerald-300 leading-relaxed">
+                Todos os <strong>{aspecRegisteredAssets.length}</strong> bens cadastrados nesta sala no ASPEC foram devidamente localizados e confirmados in loco. Não há entradas de outras salas, não há saídas e não há itens sem registro contábil. Esta sala dispensa qualquer alteração no sistema ASPEC!
+              </p>
+            </div>
+          ) : (
+            <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200 text-xs">
+              <span className="font-bold block text-amber-900 dark:text-amber-200">⚠️ Movimentações a lançar no sistema ASPEC:</span>
+              Identificadas alterações entre o cadastro contábil e a vistoria física in loco. Utilize a relação abaixo para orientar as transferências de outras salas e inclusões no sistema ASPEC.
+            </div>
+          )}
+
           {/* Summary Pills */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="p-3 rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/60 dark:bg-emerald-950/20">
@@ -495,15 +672,17 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
                         <td className="p-2.5">
                           {a.foraDoAspec && !a.setorOriginalAspec ? (
                             <span className="font-semibold text-rose-700 dark:text-rose-400">
-                              NÃO CONSTAVA NO ASPEC
+                              NÃO CONSTAVA NO ASPEC (ACHADO FÍSICO)
                             </span>
                           ) : (
                             <div className="text-xs space-y-0.5">
                               <div className="text-amber-900 dark:text-amber-200">
-                                <strong>No ASPEC a localização é:</strong> <span className="font-bold underline decoration-amber-500">{a.setorOriginalAspec || a.setorNome}</span>
+                                <strong>No ASPEC a localização é:</strong><br/>
+                                Área: <strong>{getAssetFullLocation(a).area}</strong><br/>
+                                Subárea / Sala: <span className="font-bold underline decoration-amber-500">{getAssetFullLocation(a).subarea}</span>
                               </div>
-                              <div className="text-emerald-800 dark:text-emerald-300">
-                                <strong>No sistema/físico está na sala conferida:</strong> <span className="font-bold">{sectorName}</span>
+                              <div className="text-emerald-800 dark:text-emerald-300 pt-0.5">
+                                <strong>No físico está na sala conferida:</strong> <span className="font-bold">{sectorName}</span>
                               </div>
                             </div>
                           )}
@@ -519,7 +698,7 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
                                 [TRANSFERÊNCIA INTERNA DE CARGA]
                               </span>
                               <span className="text-slate-600 dark:text-slate-300">
-                                No ASPEC a localização é "{a.setorOriginalAspec || a.setorNome}" e no sistema/físico está na sala conferida "{sectorName}".
+                                No ASPEC a localização é Área: "{getAssetFullLocation(a).area}" · Subárea: "{getAssetFullLocation(a).subarea}" e no sistema/físico está na sala conferida "{sectorName}".
                               </span>
                             </div>
                           )}

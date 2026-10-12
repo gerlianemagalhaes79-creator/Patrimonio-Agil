@@ -24,6 +24,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { NewLocationModal } from './NewLocationModal';
+import { buildUnitSubareas, getAssetUnitId } from '../utils/locationHelper';
 
 interface UnitsInteractiveMapProps {
   assets: Asset[];
@@ -56,179 +57,19 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
   // Unidade Selecionada
   const activeUnit = units.find(u => u.id === selectedUnitId) || units[0];
 
-  // Bens filtrados para a unidade selecionada
-  const unitAssets = useMemo(() => {
-    return assets.filter(a => {
-      if (selectedUnitId === 'policlinica') {
-        return a.unidadeId === 'policlinica' || a.unidadeNome?.toLowerCase().includes('poli') || a.unidadeNome?.toLowerCase().includes('bernardo');
-      }
-      if (selectedUnitId === 'ceo') {
-        return a.unidadeId === 'ceo' || a.unidadeNome?.toLowerCase().includes('ceo') || a.unidadeNome?.toLowerCase().includes('odonto');
-      }
-      if (selectedUnitId === 'sede-cpsms') {
-        return a.unidadeId === 'sede-cpsms' || a.unidadeNome?.toLowerCase().includes('sede') || a.unidadeNome?.toLowerCase().includes('consórcio');
-      }
-      return a.unidadeId === selectedUnitId;
-    });
-  }, [assets, selectedUnitId]);
+  // Lista oficial e completa de SALAS / SUBÁREAS da Unidade com bens alocados
+  // No ASPEC: Área = Unidade (ex: 004 - CEO Sobral) e Subárea = Sala (ex: 004 - COPA)
+  const allSubareasWithStats = useMemo(() => {
+    return buildUnitSubareas(selectedUnitId as any, sectors, assets);
+  }, [selectedUnitId, sectors, assets]);
 
-  // Função normalizadora para correspondência semântica de salas e bens
-  const normalize = (str?: string) => 
-    (str || '')
-      .trim()
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '');
-
-  // Validador inteligente de pertencimento do bem à sala
-  const doesAssetMatchSector = (a: Asset, sec: Sector): boolean => {
-    if (a.setorId && sec.id && a.setorId === sec.id) return true;
-
-    const secName = normalize(sec.nome);
-    const secSigla = normalize(sec.sigla);
-    
-    const aSetor = normalize(a.setorNome);
-    const aArea = normalize(a.area);
-    const aSub = normalize(a.subsetorNome || a.subarea);
-    const aEncontrado = normalize(a.auditoria?.setorEncontrado);
-    const aSubEncontrado = normalize(a.auditoria?.subsetorEncontrado);
-    const aOrig = normalize(a.setorOriginalAspec);
-
-    const candidates = [aSetor, aArea, aSub, aEncontrado, aSubEncontrado, aOrig].filter(Boolean);
-
-    for (const c of candidates) {
-      if (c === secName || (secSigla && c === secSigla)) return true;
-      if (secName.includes(c) && c.length >= 4) return true;
-      if (c.includes(secName) && secName.length >= 4) return true;
-    }
-
-    // Verifica subsetores cadastrados no setor
-    if (sec.subsetores && sec.subsetores.length > 0) {
-      for (const sub of sec.subsetores) {
-        const subName = normalize(sub.nome);
-        for (const c of candidates) {
-          if (c === subName) return true;
-          if (subName.includes(c) && c.length >= 4) return true;
-          if (c.includes(subName) && subName.length >= 4) return true;
-        }
-      }
-    }
-
-    return false;
-  };
-
-  // Setores combinados: setores pré-definidos + detecção automática de salas com bens importados
-  const combinedSectors = useMemo(() => {
-    // 1. Setores cadastrados para a unidade
-    const baseSectors = sectors.filter(s => 
-      s.unidadeId === selectedUnitId || 
-      s.unidadeNome?.toLowerCase().includes(activeUnit.sigla.toLowerCase())
-    );
-
-    // 2. Descoberta de salas a partir de bens existentes que não bateram com setores pré-definidos
-    const additionalMap = new Map<string, Sector>();
-    
-    unitAssets.forEach(a => {
-      const alreadyMatches = baseSectors.some(sec => doesAssetMatchSector(a, sec));
-      if (!alreadyMatches) {
-        const roomName = (a.setorNome || a.area || a.subsetorNome || 'Setor Operacional').trim();
-        const normKey = normalize(roomName);
-        if (normKey && !additionalMap.has(normKey)) {
-          additionalMap.set(normKey, {
-            id: `sec-auto-${selectedUnitId}-${normKey.replace(/[^a-z0-9]/g, '-')}`,
-            unidadeId: selectedUnitId,
-            unidadeNome: activeUnit.nome,
-            nome: roomName,
-            sigla: `${activeUnit.sigla.slice(0, 4)}-${roomName.slice(0, 4).toUpperCase()}`,
-            responsavelNome: a.responsavelNome || 'Responsável Setorial',
-            responsavelCargo: a.responsavelCargo || 'Responsável pelo Setor',
-            responsavelMatricula: a.responsavelMatricula || 'CPSMS',
-            subsetores: [],
-          });
-        }
-      }
-    });
-
-    return [...baseSectors, ...Array.from(additionalMap.values())];
-  }, [sectors, unitAssets, selectedUnitId, activeUnit]);
-
-  // Estatísticas completas e em tempo real por sala calculadas a partir dos bens
+  // Lista de salas filtrada para exibição (com controle de salas vazias)
   const sectorsWithStats = useMemo(() => {
-    const rawList = combinedSectors.map(sector => {
-      // Bens vinculados a esta sala com validação profunda
-      const roomAssets = unitAssets.filter(a => doesAssetMatchSector(a, sector));
-
-      const totalCount = roomAssets.length;
-      const checkedCount = roomAssets.filter(a => a.auditoria?.conferido).length;
-      const missingCount = roomAssets.filter(a => a.auditoria?.statusDivergencia === 'nao_encontrado').length;
-      const divergentCount = roomAssets.filter(a => a.auditoria?.statusDivergencia === 'setor_divergente').length;
-      const totalVal = roomAssets.reduce((sum, a) => sum + (a.valorAquisicao || a.valorBrutoContabil || 0), 0);
-
-      const percent = totalCount > 0 ? Math.round((checkedCount / totalCount) * 100) : (sector.revisada ? 100 : 0);
-
-      // Status visual da sala
-      let visualStatus: 'concluida' | 'em_andamento' | 'pendente' | 'divergencia' = 'pendente';
-      if (sector.revisada || (totalCount > 0 && percent === 100)) {
-        visualStatus = 'concluida';
-      } else if (missingCount > 0 || divergentCount > 0) {
-        visualStatus = 'divergencia';
-      } else if (checkedCount > 0) {
-        visualStatus = 'em_andamento';
-      } else {
-        visualStatus = 'pendente';
-      }
-
-      // Atribuição de Bloco Arquitetônico inteligente
-      let assignedBlock = sector.bloco;
-      if (!assignedBlock) {
-        const norm = normalize(sector.nome);
-        if (selectedUnitId === 'policlinica') {
-          if (norm.includes('consult') || norm.includes('clinic') || norm.includes('ambulat') || norm.includes('pediat') || norm.includes('oftalm')) {
-            assignedBlock = 'Bloco A – Ambulatórios & Consultórios Médicos';
-          } else if (norm.includes('raio') || norm.includes('tomo') || norm.includes('imagem') || norm.includes('ultra') || norm.includes('mamo') || norm.includes('endo')) {
-            assignedBlock = 'Bloco B – Centro de Diagnóstico por Imagem';
-          } else if (norm.includes('farm') || norm.includes('lab') || norm.includes('fisio') || norm.includes('reabilita') || norm.includes('cme') || norm.includes('cirurg')) {
-            assignedBlock = 'Bloco C – Reabilitação & Apoio Técnico';
-          } else {
-            assignedBlock = 'Bloco D – Administrativo & Regulação';
-          }
-        } else if (selectedUnitId === 'ceo') {
-          if (norm.includes('clinic') || norm.includes('consult') || norm.includes('odonto') || norm.includes('endo') || norm.includes('perio')) {
-            assignedBlock = 'Ala Clínica Odontológica';
-          } else if (norm.includes('cme') || norm.includes('esteril') || norm.includes('expurgo')) {
-            assignedBlock = 'CME Odonto – Esterilização';
-          } else if (norm.includes('radio') || norm.includes('raio') || norm.includes('panoram')) {
-            assignedBlock = 'Diagnóstico por Imagem Odontológica';
-          } else {
-            assignedBlock = 'Apoio, Recepção & Almoxarifado';
-          }
-        } else {
-          assignedBlock = 'Prédio da Sede Administrativa do Consórcio';
-        }
-      }
-
-      return {
-        ...sector,
-        bloco: assignedBlock,
-        roomAssets,
-        totalCount,
-        checkedCount,
-        missingCount,
-        divergentCount,
-        totalVal,
-        percent,
-        visualStatus,
-      };
-    });
-
-    // CORREÇÃO SOLICITADA: Oculta salas que têm zero bens (totalCount === 0),
-    // a menos que o usuário deseje exibi-las explicitamente ou tenham sido criadas recentemente
     if (hideEmptyRooms) {
-      return rawList.filter(s => s.totalCount > 0 || s.revisada || s.id.startsWith('sec-custom-'));
+      return allSubareasWithStats.filter(s => s.totalCount > 0 || s.revisada || s.id.startsWith('sec-custom-'));
     }
-
-    return rawList;
-  }, [combinedSectors, unitAssets, selectedUnitId, hideEmptyRooms]);
+    return allSubareasWithStats;
+  }, [allSubareasWithStats, hideEmptyRooms]);
 
   // Lista de Blocos únicos para a unidade selecionada
   const availableBlocks = useMemo(() => {
@@ -365,9 +206,9 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {units.map((unit) => {
           const isSelected = selectedUnitId === unit.id;
-          const uSectors = sectors.filter(s => s.unidadeId === unit.id);
-          const uConcluidas = uSectors.filter(s => s.revisada).length;
-          const uPerc = uSectors.length > 0 ? Math.round((uConcluidas / uSectors.length) * 100) : 0;
+          const uRooms = buildUnitSubareas(unit.id as any, sectors, assets);
+          const uConcluidas = uRooms.filter(s => s.visualStatus === 'concluida').length;
+          const uPerc = uRooms.length > 0 ? Math.round((uConcluidas / uRooms.length) * 100) : 0;
 
           return (
             <button
@@ -416,13 +257,38 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
                   />
                 </div>
                 <div className="flex items-center justify-between text-[10.5px] text-slate-500">
-                  <span>{uSectors.length} salas mapeadas</span>
+                  <span>{uRooms.length} subáreas mapeadas</span>
                   <span className="text-emerald-600 dark:text-emerald-400 font-bold">{uConcluidas} revisadas</span>
                 </div>
               </div>
             </button>
           );
         })}
+      </div>
+
+      {/* Context Banner: Estrutura ASPEC (Área = Unidade / Subárea = Sala Física) */}
+      <div className="p-4 bg-gradient-to-r from-teal-50 via-emerald-50 to-cyan-50 dark:from-slate-850 dark:via-slate-800 dark:to-slate-850 border-2 border-emerald-300 dark:border-emerald-700/60 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs shadow-sm">
+        <div className="flex items-start sm:items-center gap-3">
+          <div className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-mono font-black text-xs shrink-0 shadow-xs">
+            {selectedUnitId === 'ceo' ? 'ÁREA 004' : selectedUnitId === 'policlinica' ? 'ÁREA 001' : 'ÁREA 002'}
+          </div>
+          <div>
+            <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2 flex-wrap text-sm">
+              <span>Unidade (Área no ASPEC):</span>
+              <span className="font-black text-emerald-800 dark:text-emerald-300 underline decoration-emerald-400 underline-offset-2">
+                {activeUnit.nome}
+              </span>
+            </div>
+            <div className="text-[11.5px] text-slate-600 dark:text-slate-300 mt-0.5">
+              Uma localização é composta de <strong>Área ({selectedUnitId === 'ceo' ? '004 - CEO Sobral' : activeUnit.sigla})</strong> + <strong>Subárea (Sala / Consultório)</strong>. Abaixo estão todas as subáreas com seus respectivos bens físicos alocados.
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="px-3 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-900 dark:text-emerald-200 font-mono font-black text-xs border border-emerald-300 dark:border-emerald-700">
+            {sectorsWithStats.length} Subáreas Físicas Exibidas
+          </span>
+        </div>
       </div>
 
       {/* Executive Unit Dashboard Pills */}

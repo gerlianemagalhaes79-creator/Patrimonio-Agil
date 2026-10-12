@@ -63,7 +63,15 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          // Garante que todas as salas e setores oficiais do CPSMS_SECTORS estejam presentes,
+          // mesclando com quaisquer personalizações ou salas adicionais criadas pelo usuário.
+          const map = new Map<string, Sector>();
+          CPSMS_SECTORS.forEach(s => map.set(s.id, s));
+          parsed.forEach((s: Sector) => {
+            const existing = map.get(s.id);
+            map.set(s.id, existing ? { ...existing, ...s } : s);
+          });
+          return Array.from(map.values());
         }
       }
     } catch (e) {
@@ -130,6 +138,19 @@ export default function App() {
         if ((!effectiveAssets || effectiveAssets.length <= 1) && INITIAL_ASSETS.length > 1) {
           effectiveAssets = INITIAL_ASSETS;
           saveAssetsToDB(INITIAL_ASSETS).catch(console.warn);
+        } else if (Array.isArray(effectiveAssets) && effectiveAssets.length > 1) {
+          // Garante que bens oficiais de novas salas (ex: CEO, CME, consultórios adicionais)
+          // sejam mesclados para o usuário ter o inventário físico completo
+          const existingIds = new Set(effectiveAssets.map(a => a.id));
+          const existingTombos = new Set(effectiveAssets.map(a => (a.tombamento || '').toString().trim()));
+          const missingAssets = INITIAL_ASSETS.filter(a => {
+            const tombo = (a.tombamento || '').toString().trim();
+            return !existingIds.has(a.id) && (!tombo || !existingTombos.has(tombo));
+          });
+          if (missingAssets.length > 0) {
+            effectiveAssets = [...effectiveAssets, ...missingAssets];
+            saveAssetsToDB(effectiveAssets).catch(console.warn);
+          }
         }
         localAssets = effectiveAssets;
         setAssets(effectiveAssets);

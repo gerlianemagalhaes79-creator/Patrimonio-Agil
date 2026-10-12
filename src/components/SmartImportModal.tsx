@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import { Asset, Sector, UnitInfo, TomboOrigin, AssetCategory, AssetCondition } from '../types';
 import { parseCurrencyValue, formatBRL } from '../utils/formatters';
+import { isUnitName } from '../utils/locationHelper';
 import { 
   FileSpreadsheet, 
   CheckCircle2, 
@@ -727,19 +728,19 @@ export const SmartImportModal: React.FC<SmartImportModalProps> = ({
         ? String(row[mapping.orgao]).trim()
         : 'Consórcio Público de Saúde da Microrregião de Sobral (CPSMS)';
 
-      // 11. Área e Subárea / Unidade e Setor
+      // 11. Área e Subárea / Unidade e Setor (Regra de Ouro do ASPEC: Área = Unidade / Subárea = Sala Física)
       const rawArea = mapping.area ? String(row[mapping.area] || '').trim() : '';
       const rawSubarea = mapping.subarea ? String(row[mapping.subarea] || '').trim() : '';
       const checkAreaUpper = (rawArea + ' ' + orgaoVal).toUpperCase();
 
       let unitObj = units.find(u => u.id === defaultUnitId) || units[0];
-      if (checkAreaUpper.includes('CEO') || checkAreaUpper.includes('ODONTO')) {
+      if (checkAreaUpper.includes('CEO') || checkAreaUpper.includes('ODONTO') || checkAreaUpper.includes('004')) {
         unitObj = units.find(u => u.id === 'ceo') || unitObj;
         ceoCount++;
-      } else if (checkAreaUpper.includes('POLI') || checkAreaUpper.includes('BERNARDO') || checkAreaUpper.includes('FELIX')) {
+      } else if (checkAreaUpper.includes('POLI') || checkAreaUpper.includes('BERNARDO') || checkAreaUpper.includes('FELIX') || checkAreaUpper.includes('001')) {
         unitObj = units.find(u => u.id === 'policlinica') || unitObj;
         poliCount++;
-      } else if (checkAreaUpper.includes('SEDE') || checkAreaUpper.includes('ADMIN')) {
+      } else if (checkAreaUpper.includes('SEDE') || checkAreaUpper.includes('ADMIN') || checkAreaUpper.includes('CONSORCIO') || checkAreaUpper.includes('002')) {
         unitObj = units.find(u => u.id === 'sede-cpsms') || unitObj;
         sedeCount++;
       } else {
@@ -750,9 +751,14 @@ export const SmartImportModal: React.FC<SmartImportModalProps> = ({
 
       const unitSectors = sectors.filter(s => s.unidadeId === unitObj.id);
       const matchedSector = unitSectors.find(s => 
+        (rawSubarea && s.nome.toLowerCase().includes(rawSubarea.toLowerCase())) ||
+        (rawSubarea && s.sigla.toLowerCase() === rawSubarea.toLowerCase()) ||
         s.nome.toLowerCase().includes(rawArea.toLowerCase()) || 
         s.sigla.toLowerCase() === rawArea.toLowerCase()
       ) || unitSectors[0];
+
+      // Determinação da Subárea / Sala física exata
+      const physicalRoom = rawSubarea || (!isUnitName(rawArea) && rawArea ? rawArea : matchedSector.subsetores[0]?.nome || 'Sala Geral');
 
       // 12. Responsável
       const responsavelVal = mapping.responsavel && row[mapping.responsavel]
@@ -797,11 +803,11 @@ export const SmartImportModal: React.FC<SmartImportModalProps> = ({
         descricao: descricaoVal,
         unidadeId: unitObj.id,
         unidadeNome: unitObj.nome,
-        area: rawArea || matchedSector.nome,
-        subarea: rawSubarea || matchedSector.subsetores[0]?.nome || 'Geral',
+        area: rawArea || unitObj.nome,
+        subarea: physicalRoom,
         setorId: matchedSector.id,
-        setorNome: rawArea || matchedSector.nome,
-        subsetorNome: rawSubarea || matchedSector.subsetores[0]?.nome || 'Geral',
+        setorNome: physicalRoom,
+        subsetorNome: physicalRoom,
         responsavelNome: responsavelVal,
         responsavelCargo: matchedSector.responsavelCargo,
         responsavelMatricula: matchedSector.responsavelMatricula,

@@ -46,6 +46,7 @@ import { RoomAspecReportModal } from './RoomAspecReportModal';
 import { UnlocatedAssetsReportModal } from './UnlocatedAssetsReportModal';
 import { AspecOfficializationModal } from './AspecOfficializationModal';
 import { RoomComparisonModal } from './RoomComparisonModal';
+import { getAssetUnitId, getAssetRoomName, doesAssetMatchRoom, isUnitName, buildUnitSubareas, getAssetFullLocation, doesAssetOfficiallyMatchRoom, doesAssetPhysicallyMatchRoom } from '../utils/locationHelper';
 
 interface AuditViewProps {
   assets: Asset[];
@@ -101,6 +102,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
   const [showRoomAspecModal, setShowRoomAspecModal] = useState<boolean>(false);
   const [showUnlocatedModal, setShowUnlocatedModal] = useState<boolean>(false);
   const [roomNewSemPlaqueta, setRoomNewSemPlaqueta] = useState<boolean>(false);
+  const [roomNewForaDoAspec, setRoomNewForaDoAspec] = useState<boolean>(false);
 
   // Side-by-side Dual Version Comparison Modal & Room Conference Draft States
   const [showRoomComparisonModal, setShowRoomComparisonModal] = useState<boolean>(false);
@@ -212,13 +214,13 @@ export const AuditView: React.FC<AuditViewProps> = ({
     return assets.filter(a => a.foraDoAspec).length;
   }, [assets]);
 
-  // Available Units
+  // Available Units with ASPEC Area codes
   const availableUnits = useMemo(() => {
     return [
-      { id: 'policlinica', nome: 'Policlínica Regional Bernardo Félix da Silva', sigla: 'Policlínica', icon: '🏥' },
-      { id: 'ceo', nome: 'CEO – Centro de Especialidades Odontológicas', sigla: 'CEO Sobral', icon: '🦷' },
-      { id: 'sede-cpsms', nome: 'Consórcio CPSMS (Sede Administrativa)', sigla: 'Sede CPSMS', icon: '🏛️' },
-      { id: 'cer', nome: 'CER – Centro Especializado em Reabilitação', sigla: 'CER', icon: '♿' },
+      { id: 'policlinica', nome: 'Policlínica Regional Bernardo Félix da Silva', sigla: 'Policlínica', areaCode: 'Área 001', icon: '🏥' },
+      { id: 'ceo', nome: 'CEO – Centro de Especialidades Odontológicas', sigla: 'CEO Sobral', areaCode: 'Área 004', icon: '🦷' },
+      { id: 'sede-cpsms', nome: 'Consórcio CPSMS (Sede Administrativa)', sigla: 'Sede CPSMS', areaCode: 'Área 002', icon: '🏛️' },
+      { id: 'cer', nome: 'CER – Centro Especializado em Reabilitação', sigla: 'CER', areaCode: 'Área 003', icon: '♿' },
     ];
   }, []);
 
@@ -226,119 +228,32 @@ export const AuditView: React.FC<AuditViewProps> = ({
     return availableUnits.find(u => u.id === selectedUnitId) || availableUnits[0];
   }, [availableUnits, selectedUnitId]);
 
-  // Assets belonging to currently selected Unit
+  // Assets belonging to currently selected Unit (identifica por unidadeId ou Área no ASPEC)
   const unitAssets = useMemo(() => {
-    return assets.filter(a => {
-      const uEncontrada = (a.auditoria?.unidadeEncontrada || '').toLowerCase();
-      const inThisUnitFound = (selectedUnitId === 'policlinica' && uEncontrada.includes('poli')) ||
-        (selectedUnitId === 'ceo' && uEncontrada.includes('ceo')) ||
-        (selectedUnitId === 'sede-cpsms' && (uEncontrada.includes('sede') || uEncontrada.includes('consórcio'))) ||
-        (selectedUnitId === 'cer' && uEncontrada.includes('cer'));
-
-      if (inThisUnitFound) return true;
-
-      if (selectedUnitId === 'policlinica') return a.unidadeId === 'policlinica' || a.unidadeNome.toLowerCase().includes('poli');
-      if (selectedUnitId === 'ceo') return a.unidadeId === 'ceo' || a.unidadeNome.toLowerCase().includes('ceo');
-      if (selectedUnitId === 'sede-cpsms') return a.unidadeId === 'sede-cpsms' || a.unidadeNome.toLowerCase().includes('sede') || a.unidadeNome.toLowerCase().includes('consórcio');
-      if (selectedUnitId === 'cer') return a.unidadeId === 'cer' || a.unidadeNome.toLowerCase().includes('cer');
-      return true;
-    });
+    return assets.filter(a => getAssetUnitId(a) === selectedUnitId);
   }, [assets, selectedUnitId]);
 
-  // Distinct Sectors for the selected Unit
+  // Distinct Rooms (Subáreas no ASPEC) for the selected Unit (Área no ASPEC)
   const unitSectorsList = useMemo(() => {
-    const definedSectors = sectors.filter(s => {
-      if (selectedUnitId === 'policlinica') return s.unidadeId === 'policlinica';
-      if (selectedUnitId === 'ceo') return s.unidadeId === 'ceo';
-      if (selectedUnitId === 'sede-cpsms') return s.unidadeId === 'sede-cpsms';
-      if (selectedUnitId === 'cer') return s.unidadeId === 'cer';
-      return false;
-    });
-
-    // Collect any distinct sector / room names found in defined sectors and unit assets
-    const sectorMap = new Map<string, { id: string; nome: string; responsavel?: string; revisada?: boolean }>();
-    const usedIds = new Set<string>();
-
-    definedSectors.forEach(s => {
-      const key = s.nome.trim().toLowerCase();
-      let uniqueSecId = s.id;
-      if (usedIds.has(uniqueSecId)) {
-        uniqueSecId = `${s.id}-${Math.random().toString(36).slice(2, 7)}`;
-      }
-      usedIds.add(uniqueSecId);
-
-      sectorMap.set(key, {
-        id: uniqueSecId,
-        nome: s.nome,
-        responsavel: s.responsavelNome,
-        revisada: s.revisada,
-      });
-    });
-
-    unitAssets.forEach(a => {
-      // Prioritize the actual room/location name
-      const sNome = (a.setorNome || a.area || a.subsetorNome || 'Setor Não Informado').trim();
-      const key = sNome.toLowerCase();
-      if (!sectorMap.has(key)) {
-        // Generate a clean, unique ID that NEVER collides with defined sector IDs!
-        const slug = key
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '')
-          .replace(/[^a-z0-9]+/gi, '-')
-          .toLowerCase()
-          .replace(/^-+|-+$/g, '') || 'sala';
-
-        let uniqueId = `sala-${selectedUnitId}-${slug}`;
-        let counter = 1;
-        while (usedIds.has(uniqueId)) {
-          uniqueId = `sala-${selectedUnitId}-${slug}-${counter++}`;
-        }
-        usedIds.add(uniqueId);
-
-        sectorMap.set(key, {
-          id: uniqueId,
-          nome: sNome,
-          responsavel: a.responsavelNome,
-          revisada: false,
-        });
-      }
-    });
-
-    const list = Array.from(sectorMap.values()).map(sec => {
-      // Find all assets in this sector/room
-      const secLower = sec.nome.trim().toLowerCase();
-      const secAssets = unitAssets.filter(a => {
-        const aSetor = (a.setorNome || '').trim().toLowerCase();
-        const aArea = (a.area || '').trim().toLowerCase();
-        const aSub = (a.subsetorNome || a.subarea || '').trim().toLowerCase();
-        return aSetor === secLower || aSub === secLower || aArea === secLower;
-      });
-      const checkedCount = secAssets.filter(a => a.auditoria?.conferido).length;
-      const totalVal = secAssets.reduce((sum, a) => sum + (a.valorAquisicao || a.valorBrutoContabil || 0), 0);
-      return {
-        ...sec,
-        assetsCount: secAssets.length,
-        checkedCount,
-        pendingCount: secAssets.length - checkedCount,
-        totalVal,
-        percent: secAssets.length > 0 ? Math.round((checkedCount / secAssets.length) * 100) : (sec.revisada ? 100 : 0)
-      };
-    });
-
-    // Sort: sectors with more assets first, then alphabetically
-    list.sort((a, b) => {
-      if (b.assetsCount !== a.assetsCount) {
-        return b.assetsCount - a.assetsCount;
-      }
-      return a.nome.localeCompare(b.nome, 'pt-BR');
-    });
+    const list = buildUnitSubareas(selectedUnitId as any, sectors, assets).map(s => ({
+      id: s.id,
+      nome: s.nome,
+      responsavel: s.responsavelNome,
+      revisada: s.revisada,
+      bloco: s.bloco,
+      assetsCount: s.totalCount,
+      checkedCount: s.checkedCount,
+      pendingCount: s.totalCount - s.checkedCount,
+      totalVal: s.totalVal,
+      percent: s.percent
+    }));
 
     if (sectorSearchQuery.trim()) {
       const q = sectorSearchQuery.toLowerCase();
       return list.filter(s => s.nome.toLowerCase().includes(q) || (s.responsavel || '').toLowerCase().includes(q));
     }
     return list;
-  }, [sectors, unitAssets, selectedUnitId, sectorSearchQuery]);
+  }, [sectors, assets, selectedUnitId, sectorSearchQuery]);
 
   // Synchronize initialSectorName when passed from Caderno de Balanço or external links
   useEffect(() => {
@@ -347,6 +262,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
       const found = unitSectorsList.find(s => 
         s.nome.trim().toLowerCase() === targetLower ||
         s.id === initialSectorName ||
+        doesAssetMatchRoom({} as Asset, s.nome) ||
         s.nome.trim().toLowerCase().includes(targetLower) ||
         targetLower.includes(s.nome.trim().toLowerCase())
       );
@@ -364,14 +280,8 @@ export const AuditView: React.FC<AuditViewProps> = ({
 
   const activeSectorAssets = useMemo(() => {
     if (!activeSector) return [];
-    const secLower = activeSector.nome.trim().toLowerCase();
-    let list = assets.filter(a => {
-      const aSetor = (a.setorNome || '').trim().toLowerCase();
-      const aArea = (a.area || '').trim().toLowerCase();
-      const aSub = (a.subsetorNome || a.subarea || '').trim().toLowerCase();
-      const aEncontrado = (a.auditoria?.setorEncontrado || '').trim().toLowerCase();
-      return aSetor === secLower || aSub === secLower || aArea === secLower || aEncontrado === secLower;
-    });
+    // Filtra estritamente os bens alocados na Subárea selecionada
+    let list = unitAssets.filter(a => doesAssetMatchRoom(a, activeSector.nome));
 
     if (roomStatusFilter === 'pendentes') {
       list = list.filter(a => !a.auditoria?.conferido);
@@ -386,7 +296,8 @@ export const AuditView: React.FC<AuditViewProps> = ({
       list = list.filter(a => 
         a.tombamento.toLowerCase().includes(q) || 
         a.descricao.toLowerCase().includes(q) ||
-        (a.numeroSerie || '').toLowerCase().includes(q)
+        (a.numeroSerie || '').toLowerCase().includes(q) ||
+        (a.subarea || '').toLowerCase().includes(q)
       );
     }
 
@@ -812,8 +723,8 @@ export const AuditView: React.FC<AuditViewProps> = ({
 
     // Se o bem já existia no banco/ASPEC
     if (matchedExistingAsset) {
-      const isOtherSector = matchedExistingAsset.setorNome.trim().toLowerCase() !== activeSector.nome.trim().toLowerCase();
-      if (isOtherSector) {
+      const belongsHere = doesAssetOfficiallyMatchRoom(matchedExistingAsset, activeSector.nome);
+      if (!belongsHere) {
         // Disparar confirmação de modificação de setor obrigatória
         setPendingDivergenceConfirmation({
           asset: matchedExistingAsset,
@@ -831,6 +742,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
         setRoomNewSerial('');
         setRoomNewFornecedor('');
         setRoomNewValor('');
+        setRoomNewForaDoAspec(false);
         setMatchedExistingAsset(null);
         setBulkFeedback(`Item "${matchedExistingAsset.descricao}" conferido com sucesso nesta sala!`);
         setTimeout(() => setBulkFeedback(null), 5000);
@@ -841,23 +753,25 @@ export const AuditView: React.FC<AuditViewProps> = ({
     const parsedVal = parseFloat(roomNewValor.replace(',', '.')) || 0;
     const tomboFinal = roomNewSemPlaqueta
       ? (roomNewTombo.trim() || `SEM-TOMBO-${activeUnitInfo.sigla.toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`)
-      : (roomNewTombo.trim() || `FORA-ASPEC-${Math.floor(1000 + Math.random() * 9000)}`);
+      : (roomNewTombo.trim() || `TOMBO-${Math.floor(1000 + Math.random() * 9000)}`);
+
+    const isUntracked = roomNewForaDoAspec || roomNewSemPlaqueta;
 
     const newAsset: Asset = {
       id: `asset-room-${Date.now()}`,
       tombamento: tomboFinal,
       tomboOrigemSesa: roomNewTomboSesa.trim() || undefined,
       duploTombamento: Boolean(roomNewTombo.trim() && roomNewTomboSesa.trim()),
-      foraDoAspec: true,
+      foraDoAspec: isUntracked,
       semPlaqueta: roomNewSemPlaqueta,
       origemTombo: roomNewTomboSesa.trim() ? 'SESA (Governo do Ceará - Cessão/Comodato)' : 'CPSMS (Próprio do Consórcio)',
-      origemRecurso: 'Achado em Campo (Não Constava no ASPEC)',
-      formaAquisicao: 'Achado de Inventário',
+      origemRecurso: isUntracked ? 'Achado em Campo (Não Constava no ASPEC)' : 'Cadastro ASPEC',
+      formaAquisicao: isUntracked ? 'Achado de Inventário' : 'Compra / Pregão Eletrônico',
       orgao: 'Consórcio Público de Saúde da Microrregião de Sobral (CPSMS)',
       descricao: roomNewDescricao.trim(),
       unidadeId: activeUnitInfo.id,
       unidadeNome: activeUnitInfo.nome,
-      area: activeSector.nome,
+      area: activeUnitInfo.nome,
       subarea: activeSector.nome,
       setorId: activeSector.id,
       setorNome: activeSector.nome,
@@ -874,12 +788,14 @@ export const AuditView: React.FC<AuditViewProps> = ({
       depreciacaoAcumulada: 0,
       dataAquisicao: new Date().toISOString().slice(0, 10),
       dataTombamento: new Date().toISOString().slice(0, 10),
-      notaFiscal: 'S/N - Achado Físico',
+      notaFiscal: isUntracked ? 'S/N - Achado Físico' : 'Cadastrado ASPEC',
       fornecedor: roomNewFornecedor.trim() || 'A Apurar',
       numeroSerie: roomNewSerial.trim() || 'S/N',
       observacoes: roomNewSemPlaqueta
         ? `Bem físico sem plaqueta de tombamento encontrado na sala "${activeSector.nome}" em ${new Date().toLocaleDateString('pt-BR')} por ${currentProfile.nome}. Relação para novo emplacamento no ASPEC.`
-        : `Bem físico encontrado na sala "${activeSector.nome}" em ${new Date().toLocaleDateString('pt-BR')} por ${currentProfile.nome}. Não constava no ASPEC.`,
+        : isUntracked
+          ? `Bem físico encontrado na sala "${activeSector.nome}" em ${new Date().toLocaleDateString('pt-BR')} por ${currentProfile.nome}. Não constava no ASPEC.`
+          : `Bem cadastrado no ASPEC conferido in loco na sala "${activeSector.nome}".`,
       auditoria: {
         conferido: true,
         dataConferencia: new Date().toISOString().slice(0, 16).replace('T', ' '),
@@ -890,7 +806,9 @@ export const AuditView: React.FC<AuditViewProps> = ({
         subsetorEncontrado: activeSector.nome,
         observacaoAuditoria: roomNewSemPlaqueta
           ? 'Item físico sem plaqueta anotado para novo emplacamento no ASPEC.'
-          : 'Item encontrado fora do ASPEC e conferido in loco na sala.'
+          : isUntracked
+            ? 'Item encontrado fora do ASPEC e conferido in loco na sala.'
+            : 'Item conferido in loco na sala conforme ASPEC.'
       }
     };
 
@@ -903,6 +821,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
     setRoomNewFornecedor('');
     setRoomNewValor('');
     setRoomNewSemPlaqueta(false);
+    setRoomNewForaDoAspec(false);
     setMatchedExistingAsset(null);
     setBulkFeedback(`Item "${newAsset.descricao}" (${newAsset.tombamento}) registrado na sala "${activeSector.nome}" e incluído na lista para o ASPEC!`);
     setTimeout(() => setBulkFeedback(null), 6000);
@@ -930,10 +849,9 @@ export const AuditView: React.FC<AuditViewProps> = ({
       return;
     }
 
-    const currentSectorLower = activeSector.nome.trim().toLowerCase();
-    const matchedSectorLower = (matched.setorNome || '').trim().toLowerCase();
+    const belongsHere = doesAssetOfficiallyMatchRoom(matched, activeSector.nome);
 
-    if (matchedSectorLower === currentSectorLower) {
+    if (belongsHere) {
       // Belongs to this room already!
       handleQuickConfirm(matched);
       setForeignTomboInput('');
@@ -945,6 +863,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
       setTimeout(() => setForeignTomboFeedback(null), 5000);
     } else {
       // Belongs to another room in ASPEC! Remanejamento detectado!
+      const fullLoc = getAssetFullLocation(matched);
       setPendingDivergenceConfirmation({
         asset: matched,
         targetRoom: activeSector.nome,
@@ -953,7 +872,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
       setForeignTomboFeedback({
         type: 'found_other',
         asset: matched,
-        message: `Tem certeza que deseja modificar? O item está no setor "${matched.setorNome}" (${matched.unidadeNome}).`
+        message: `Tem certeza que deseja modificar? No ASPEC o item está em: Área: "${fullLoc.area}" · Subárea / Sala: "${fullLoc.subarea}". Destino físico: "${activeSector.nome}".`
       });
     }
   };
@@ -1670,6 +1589,17 @@ export const AuditView: React.FC<AuditViewProps> = ({
                     <span>Salvar (Comparar ASPEC)</span>
                   </button>
 
+                  {/* EMITIR RELATÓRIO PARA O ASPEC */}
+                  <button
+                    type="button"
+                    onClick={() => setShowRoomAspecModal(true)}
+                    className="flex items-center gap-1.5 px-4 py-2.5 text-xs sm:text-sm font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl transition-all cursor-pointer shadow-xs ring-2 ring-indigo-500/20"
+                    title="Emitir relatório oficial para atualizar o sistema ASPEC: se estiver tudo OK emite termo regular, se houver alteração detalha o que saiu e o que entrou (com sala de origem)"
+                  >
+                    <FileText className="w-4 h-4 text-white" />
+                    <span>Relatório para o ASPEC</span>
+                  </button>
+
                   {/* Add Untracked Asset Right in this Room */}
                   <button
                     type="button"
@@ -1681,10 +1611,10 @@ export const AuditView: React.FC<AuditViewProps> = ({
                       setShowAddRoomAssetModal(true);
                     }}
                     className="flex items-center gap-1.5 px-3.5 py-2.5 text-xs sm:text-sm font-bold bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-xl transition-colors cursor-pointer shadow-xs"
-                    title="Cadastrar bem físico encontrado nesta sala que não está no ASPEC"
+                    title="Adicionar ou conferir tombo físico nesta sala (seja do ASPEC ou achado físico)"
                   >
                     <Plus className="w-4 h-4 text-slate-950" />
-                    <span>+ Bem Fora do ASPEC</span>
+                    <span>+ Adicionar Tombo</span>
                   </button>
 
                   {/* Documents & Reports Dropdown Menu */}
@@ -1938,10 +1868,10 @@ export const AuditView: React.FC<AuditViewProps> = ({
                       setShowAddRoomAssetModal(true);
                     }}
                     className="h-14 sm:h-16 px-5 text-xs sm:text-sm font-bold bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-2xl cursor-pointer shadow-md transition-colors flex items-center justify-center gap-2 shrink-0"
-                    title="Cadastrar bem encontrado nesta sala que não consta no ASPEC"
+                    title="Adicionar tombo nesta sala (encontrado no ASPEC ou achado físico)"
                   >
                     <Plus className="w-4 h-4 text-slate-950" />
-                    <span>Cadastrar Fora do ASPEC</span>
+                    <span>Adicionar Tombo</span>
                   </button>
                 </div>
 
@@ -1982,9 +1912,9 @@ export const AuditView: React.FC<AuditViewProps> = ({
                   }`}>
                     <div className="space-y-1">
                       <p className="text-sm font-bold">{foreignTomboFeedback.message}</p>
-                      {foreignTomboFeedback.type === 'found_other' && (
+                      {foreignTomboFeedback.type === 'found_other' && foreignTomboFeedback.asset && (
                         <p className="text-[11px] text-amber-200">
-                          Ação no ASPEC: <strong>Transferência Interna de Carga</strong> de "{foreignTomboFeedback.asset?.setorNome}" para esta sala ("{activeSector?.nome}").
+                          Ação no ASPEC: <strong>Transferência Interna de Carga</strong> de Área: "{getAssetFullLocation(foreignTomboFeedback.asset).area}" · Subárea: "{getAssetFullLocation(foreignTomboFeedback.asset).subarea}" para esta sala ("{activeSector?.nome}").
                         </p>
                       )}
                     </div>
@@ -2745,7 +2675,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
                 </span>
                 <div>
                   <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                    Adicionar Tombo Fora do ASPEC nesta Sala
+                    Adicionar / Conferir Tombo nesta Sala
                   </h3>
                   <p className="text-[11px] text-slate-500">
                     Alocado em: <strong>{activeUnitInfo.sigla}</strong> ➔ <strong>{activeSector.nome}</strong>
@@ -2822,12 +2752,12 @@ export const AuditView: React.FC<AuditViewProps> = ({
               {/* Card de Bem Encontrado no ASPEC com especificações puxadas automaticamente */}
               {matchedExistingAsset && (
                 <div className={`p-3 rounded-xl border text-xs space-y-1 ${
-                  matchedExistingAsset.setorNome.trim().toLowerCase() !== activeSector.nome.trim().toLowerCase()
+                  !doesAssetOfficiallyMatchRoom(matchedExistingAsset, activeSector.nome)
                     ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700 text-amber-950 dark:text-amber-200'
                     : 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-700 text-emerald-950 dark:text-emerald-200'
                 }`}>
                   <div className="flex items-center gap-1.5 font-bold">
-                    {matchedExistingAsset.setorNome.trim().toLowerCase() !== activeSector.nome.trim().toLowerCase() ? (
+                    {!doesAssetOfficiallyMatchRoom(matchedExistingAsset, activeSector.nome) ? (
                       <>
                         <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
                         <span>Atenção: Este item pertence oficialmente a outro setor no ASPEC!</span>
@@ -2835,13 +2765,13 @@ export const AuditView: React.FC<AuditViewProps> = ({
                     ) : (
                       <>
                         <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                        <span>Item encontrado no cadastro desta mesma sala no ASPEC!</span>
+                        <span>Item encontrado no cadastro oficial desta mesma sala no ASPEC!</span>
                       </>
                     )}
                   </div>
                   <div className="text-[11.5px] leading-relaxed pt-0.5">
                     <strong>Item:</strong> {matchedExistingAsset.descricao} (Tombo: {matchedExistingAsset.tombamento})<br />
-                    <strong>Setor no ASPEC:</strong> <span className="font-bold underline decoration-amber-500">{matchedExistingAsset.setorNome}</span> ({matchedExistingAsset.unidadeNome})<br />
+                    <strong>Localização Oficial no ASPEC:</strong> Área: <span className="font-bold underline decoration-amber-500">{getAssetFullLocation(matchedExistingAsset).area}</span> · Subárea / Sala: <span className="font-bold underline decoration-amber-500">{getAssetFullLocation(matchedExistingAsset).subarea}</span><br />
                     <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
                       ✓ Todas as especificações cadastrais foram carregadas automaticamente abaixo.
                     </span>
@@ -2918,7 +2848,39 @@ export const AuditView: React.FC<AuditViewProps> = ({
               </div>
 
               <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-300 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-300">
-                ℹ️ Este bem será cadastrado como <strong>Fora do ASPEC</strong>, alocado nesta sala e marcado automaticamente como <strong>conferido in loco</strong>.
+                {matchedExistingAsset ? (
+                  !doesAssetOfficiallyMatchRoom(matchedExistingAsset, activeSector.nome) ? (
+                    <span>📍 Bem cadastrado no ASPEC em <strong>{getAssetFullLocation(matchedExistingAsset).area} · Subárea / Sala: {getAssetFullLocation(matchedExistingAsset).subarea}</strong>. Ao salvar, será registrado como remanejamento provisório desta sala para <strong>{activeSector.nome}</strong>.</span>
+                  ) : (
+                    <span>✓ Bem cadastrado no ASPEC nesta mesma sala (Área: {getAssetFullLocation(matchedExistingAsset).area} · Subárea / Sala: {getAssetFullLocation(matchedExistingAsset).subarea}). Ao salvar, sua presença física será confirmada regularmente.</span>
+                  )
+                ) : (
+                  <div className="space-y-1.5">
+                    <span className="font-bold block text-slate-800 dark:text-slate-200">Classificação Contábil no ASPEC:</span>
+                    <div className="flex flex-wrap items-center gap-4 text-xs">
+                      <label className="flex items-center gap-1.5 cursor-pointer font-medium">
+                        <input
+                          type="radio"
+                          name="roomNewForaDoAspecRadio"
+                          checked={!roomNewForaDoAspec}
+                          onChange={() => setRoomNewForaDoAspec(false)}
+                          className="text-amber-600 cursor-pointer"
+                        />
+                        <span>Cadastrado no ASPEC (com tombo oficial)</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer font-medium">
+                        <input
+                          type="radio"
+                          name="roomNewForaDoAspecRadio"
+                          checked={roomNewForaDoAspec}
+                          onChange={() => setRoomNewForaDoAspec(true)}
+                          className="text-amber-600 cursor-pointer"
+                        />
+                        <span>Achado Físico (Fora do ASPEC)</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
@@ -2955,7 +2917,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
                   Aviso de Divergência de Setor · Localização Provisória
                 </span>
                 <h3 className="text-base sm:text-lg font-black text-slate-950 dark:text-white leading-snug">
-                  Bem encontrado nesta sala, mas registrado no ASPEC em "{pendingDivergenceConfirmation.asset.setorNome}"
+                  Bem encontrado nesta sala, mas registrado no ASPEC na Subárea "{getAssetFullLocation(pendingDivergenceConfirmation.asset).subarea}" (Área: {getAssetFullLocation(pendingDivergenceConfirmation.asset).area})
                 </h3>
               </div>
             </div>
@@ -2971,14 +2933,22 @@ export const AuditView: React.FC<AuditViewProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px]">
                 <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50">
                   <span className="text-[10px] uppercase font-bold text-amber-800 dark:text-amber-400 block">No ASPEC (Cadastro Oficial):</span>
-                  <strong className="text-slate-900 dark:text-white font-black">{pendingDivergenceConfirmation.asset.setorNome}</strong>
-                  <div className="text-[10px] text-slate-500">{pendingDivergenceConfirmation.asset.unidadeNome}</div>
+                  <div className="text-[10px] text-amber-900 dark:text-amber-300">
+                    Área: <strong>{getAssetFullLocation(pendingDivergenceConfirmation.asset).area}</strong>
+                  </div>
+                  <div className="text-xs font-black text-slate-900 dark:text-white mt-0.5">
+                    Subárea / Sala: <strong>{getAssetFullLocation(pendingDivergenceConfirmation.asset).subarea}</strong>
+                  </div>
                 </div>
 
                 <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50">
-                  <span className="text-[10px] uppercase font-bold text-emerald-800 dark:text-emerald-400 block">No Físico (Localização Provisória):</span>
-                  <strong className="text-slate-900 dark:text-white font-black">{pendingDivergenceConfirmation.targetRoom}</strong>
-                  <div className="text-[10px] text-slate-500">{pendingDivergenceConfirmation.targetUnit}</div>
+                  <span className="text-[10px] uppercase font-bold text-emerald-800 dark:text-emerald-400 block">No Físico (Localização Atual):</span>
+                  <div className="text-[10px] text-emerald-900 dark:text-emerald-300">
+                    Área: <strong>{pendingDivergenceConfirmation.targetUnit}</strong>
+                  </div>
+                  <div className="text-xs font-black text-slate-900 dark:text-white mt-0.5">
+                    Subárea / Sala: <strong>{pendingDivergenceConfirmation.targetRoom}</strong>
+                  </div>
                 </div>
               </div>
 

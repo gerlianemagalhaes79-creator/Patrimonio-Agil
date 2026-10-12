@@ -1,0 +1,522 @@
+import { Asset, Sector } from '../types';
+
+/**
+ * Normaliza strings para comparação insensível a acentos, pontuação e maiúsculas
+ */
+export function normalizeLoc(str?: string): string {
+  return (str || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * Identifica se uma determinada string refere-se à UNIDADE (Área no ASPEC)
+ * em vez de uma sala/ambiente individual (Subárea no ASPEC).
+ * 
+ * No ASPEC do CPSMS:
+ * Área: 004 - CENTRO DE ESPECIALIDADES ODONTOLOGICAS (Unidade CEO)
+ * Área: 001 - POLICLINICA REGIONAL BERNARDO FELIX DA SILVA (Unidade Policlínica)
+ * Área: 002 - CONSORCIO PUBLICO DE SAUDE DA MICRORREGIAO DE SOBRAL (Unidade Sede CPSMS)
+ */
+export function isUnitName(str?: string): boolean {
+  if (!str) return false;
+  const norm = normalizeLoc(str);
+
+  // Verificações diretas ou por código ASPEC
+  if (
+    norm === '004' ||
+    norm === '001' ||
+    norm === '002' ||
+    norm === 'ceo' ||
+    norm === 'ceo-sobral' ||
+    norm === 'ceo sobral' ||
+    norm === 'policlinica' ||
+    norm === 'sede-cpsms' ||
+    norm === 'cer'
+  ) {
+    return true;
+  }
+
+  // Se começar com código de área da Unidade e tiver o nome da Unidade
+  if (norm.startsWith('004') && (norm.includes('centro') || norm.includes('especialidade') || norm.includes('odonto') || norm.includes('ceo'))) {
+    return true;
+  }
+  if (norm.startsWith('001') && (norm.includes('poli') || norm.includes('regional') || norm.includes('bernardo') || norm.includes('felix'))) {
+    return true;
+  }
+  if (norm.startsWith('002') && (norm.includes('consor') || norm.includes('sede') || norm.includes('saude') || norm.includes('microrregiao'))) {
+    return true;
+  }
+
+  return (
+    norm.includes('centro de especialidades odontologicas') ||
+    norm.includes('especialidades odontologicas') ||
+    norm.includes('policlinica regional') ||
+    norm.includes('bernardo felix da silva') ||
+    norm.includes('consorcio publico de saude') ||
+    norm.includes('sede administrativa do consorcio') ||
+    norm.includes('sede administrativa do cpsms')
+  );
+}
+
+/**
+ * Identifica a qual unidade um bem pertence com base em unidadeId, unidadeNome e Área (ASPEC)
+ */
+export function getAssetUnitId(a: Asset): 'policlinica' | 'ceo' | 'sede-cpsms' | 'cer' {
+  // 1. Verificação explícita por ID
+  if (a.unidadeId === 'ceo' || a.unidadeId === 'policlinica' || a.unidadeId === 'sede-cpsms' || a.unidadeId === 'cer') {
+    return a.unidadeId;
+  }
+
+  // 2. Verificação em auditoria encontrada
+  const uEnc = normalizeLoc(a.auditoria?.unidadeEncontrada);
+  if (uEnc.includes('ceo') || uEnc.includes('odonto') || uEnc.includes('004')) return 'ceo';
+  if (uEnc.includes('poli') || uEnc.includes('bernardo') || uEnc.includes('001')) return 'policlinica';
+  if (uEnc.includes('sede') || uEnc.includes('consorcio') || uEnc.includes('002')) return 'sede-cpsms';
+  if (uEnc.includes('cer')) return 'cer';
+
+  // 3. Verificação no texto da Área (ASPEC), Unidade, Setor e Órgão
+  const checkText = normalizeLoc(`${a.area || ''} ${a.unidadeNome || ''} ${a.setorOriginalAspec || ''} ${a.unidadeOriginalAspec || ''} ${a.orgao || ''}`);
+
+  if (checkText.includes('004') || checkText.includes('ceo') || checkText.includes('odonto') || checkText.includes('especialidades odontologicas')) {
+    return 'ceo';
+  }
+  if (checkText.includes('001') || checkText.includes('poli') || checkText.includes('bernardo') || checkText.includes('felix da silva')) {
+    return 'policlinica';
+  }
+  if (checkText.includes('002') || checkText.includes('sede') || checkText.includes('consorcio') || checkText.includes('cpsms')) {
+    return 'sede-cpsms';
+  }
+  if (checkText.includes('cer') || checkText.includes('reabilitacao')) {
+    return 'cer';
+  }
+
+  return 'policlinica';
+}
+
+/**
+ * Extrai a SALA / SUBÁREA exata de um bem físico.
+ * 
+ * Regra de Ouro do ASPEC:
+ * Área = UNIDADE (ex: 004 - CENTRO DE ESPECIALIDADES ODONTOLOGICAS)
+ * Subárea = SALA (ex: 004 - COPA, Consultório 01, Recepção)
+ * Uma localização é composta de Área + Subárea.
+ */
+export function getAssetRoomName(a: Asset): string {
+  // 1. Prioridade máxima: conferência física in loco realizada pelo auditor
+  if (a.auditoria?.subsetorEncontrado && !isUnitName(a.auditoria.subsetorEncontrado)) {
+    return a.auditoria.subsetorEncontrado.trim();
+  }
+
+  // 2. Subárea oficial (ex: 004 - COPA, Consultório 01 – Endodontia Especializada, etc.)
+  const subarea = (a.subarea || a.subsetorNome || '').trim();
+  if (subarea && !isUnitName(subarea)) {
+    return subarea;
+  }
+
+  // 3. Se subárea não informada ou igual à unidade, verifica setorNome
+  const setor = (a.setorNome || '').trim();
+  if (setor && !isUnitName(setor)) {
+    return setor;
+  }
+
+  // 4. Verifica auditoria setor encontrado
+  if (a.auditoria?.setorEncontrado && !isUnitName(a.auditoria.setorEncontrado)) {
+    return a.auditoria.setorEncontrado.trim();
+  }
+
+  // 5. Verifica área (apenas se não for o nome da unidade inteira)
+  const area = (a.area || '').trim();
+  if (area && !isUnitName(area)) {
+    return area;
+  }
+
+  // Fallback
+  return subarea || setor || 'Sala Geral';
+}
+
+/**
+ * Retorna a Subárea / Sala oficial de cadastro do bem no ASPEC (sem levar em conta o que foi encontrado em auditoria)
+ */
+export function getAssetOfficialRoomName(a: Asset): string {
+  const origSetor = (a.setorOriginalAspec || '').trim();
+  if (origSetor && !isUnitName(origSetor)) return origSetor;
+
+  const subarea = (a.subarea || a.subsetorNome || '').trim();
+  if (subarea && !isUnitName(subarea)) return subarea;
+
+  const setor = (a.setorNome || '').trim();
+  if (setor && !isUnitName(setor)) return setor;
+
+  const area = (a.area || '').trim();
+  if (area && !isUnitName(area)) return area;
+
+  return subarea || setor || 'Lotação Geral da Unidade';
+}
+
+/**
+ * Retorna a localização oficial completa (Área + Subárea) de um bem conforme o padrão ASPEC.
+ * Área: Unidade (ex: 004 - CENTRO DE ESPECIALIDADES ODONTOLOGICAS)
+ * Subárea: Sala (ex: 004 - COPA)
+ */
+export function getAssetFullLocation(a: Asset): { area: string; subarea: string; full: string } {
+  // Área (Unidade)
+  let area = (a.unidadeOriginalAspec || a.area || '').trim();
+  if (!area || !isUnitName(area)) {
+    const uId = getAssetUnitId(a);
+    if (uId === 'ceo') {
+      area = '004 - CENTRO DE ESPECIALIDADES ODONTOLOGICAS';
+    } else if (uId === 'policlinica') {
+      area = '001 - POLICLINICA REGIONAL BERNARDO FELIX DA SILVA';
+    } else if (uId === 'sede-cpsms') {
+      area = '002 - CONSORCIO PUBLICO DE SAUDE DA MICRORREGIAO DE SOBRAL';
+    } else if (uId === 'cer') {
+      area = '003 - CENTRO ESPECIALIZADO EM REABILITACAO (CER)';
+    } else {
+      area = a.unidadeNome || 'Unidade CPSMS';
+    }
+  }
+
+  // Subárea oficial de cadastro no ASPEC
+  const subarea = getAssetOfficialRoomName(a);
+
+  return {
+    area,
+    subarea,
+    full: `Área: ${area} · Subárea: ${subarea}`
+  };
+}
+
+/**
+ * Valida estritamente se um bem pertence oficialmente a uma sala / subárea no CADASTRO DO ASPEC.
+ * IGNORA a auditoria física in loco para refletir a Carga Contábil Oficial Registrada.
+ */
+export function doesAssetOfficiallyMatchRoom(a: Asset, roomName: string): boolean {
+  if (!roomName) return false;
+
+  const target = normalizeLoc(roomName);
+  const officialRoom = normalizeLoc(getAssetOfficialRoomName(a));
+
+  if (officialRoom === target) return true;
+
+  const aSub = normalizeLoc(a.subarea || a.subsetorNome || '');
+  if (aSub && aSub === target) return true;
+
+  const aOrig = normalizeLoc(a.setorOriginalAspec || '');
+  if (aOrig && aOrig === target) return true;
+
+  const aSetor = normalizeLoc(a.setorNome || '');
+  if (aSetor && !isUnitName(aSetor) && aSetor === target) return true;
+
+  // Casos com código de subárea do ASPEC: "004 - COPA" <-> "COPA"
+  const cleanTarget = target.replace(/^[0-9]+[\s\-_.]*/, '').trim();
+  const cleanOfficial = officialRoom.replace(/^[0-9]+[\s\-_.]*/, '').trim();
+  const cleanSub = aSub.replace(/^[0-9]+[\s\-_.]*/, '').trim();
+  const cleanOrig = aOrig.replace(/^[0-9]+[\s\-_.]*/, '').trim();
+  const cleanSetor = aSetor.replace(/^[0-9]+[\s\-_.]*/, '').trim();
+
+  if (cleanTarget.length >= 3) {
+    if (cleanOfficial === cleanTarget) return true;
+    if (cleanSub === cleanTarget) return true;
+    if (cleanOrig === cleanTarget) return true;
+    if (cleanSetor && !isUnitName(cleanSetor) && cleanSetor === cleanTarget) return true;
+
+    if (officialRoom.includes(cleanTarget) && cleanTarget.length >= 4) return true;
+    if (target.includes(cleanOfficial) && cleanOfficial.length >= 4 && !isUnitName(cleanOfficial)) return true;
+    if (cleanSub.includes(cleanTarget) && cleanTarget.length >= 4) return true;
+    if (cleanTarget.includes(cleanSub) && cleanSub.length >= 4) return true;
+    if (cleanOrig.includes(cleanTarget) && cleanTarget.length >= 4) return true;
+    if (cleanTarget.includes(cleanOrig) && cleanOrig.length >= 4) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Valida se um bem foi localizado FISICAMENTE nesta sala durante a vistoria in loco.
+ */
+export function doesAssetPhysicallyMatchRoom(a: Asset, roomName: string): boolean {
+  if (!roomName) return false;
+
+  // Se marcado expressamente como ausente / não encontrado, não está fisicamente aqui
+  if (a.auditoria?.statusDivergencia === 'nao_encontrado') return false;
+
+  // 1. Auditado explicitamente nesta subárea / sala
+  const audSub = a.auditoria?.subsetorEncontrado || a.auditoria?.setorEncontrado;
+  if (audSub) {
+    if (doesAssetOfficiallyMatchRoom({ ...a, subarea: audSub, subsetorNome: audSub, setorNome: audSub }, roomName)) {
+      return true;
+    }
+  }
+
+  // 2. Se não auditado em outra sala e originalmente pertence a esta sala
+  if (!audSub && doesAssetOfficiallyMatchRoom(a, roomName)) {
+    return true;
+  }
+
+  // 3. Fallback genérico de localização
+  return doesAssetMatchRoom(a, roomName);
+}
+
+/**
+ * Valida se um bem pertence a uma sala / subárea específica
+ */
+export function doesAssetMatchRoom(a: Asset, roomName: string): boolean {
+  if (!roomName) return false;
+
+  const target = normalizeLoc(roomName);
+  const assetRoom = normalizeLoc(getAssetRoomName(a));
+
+  if (assetRoom === target) return true;
+
+  // Extrai identificadores de subárea
+  const aSub = normalizeLoc(a.subarea || a.subsetorNome || '');
+  if (aSub && aSub === target) return true;
+
+  const aSetor = normalizeLoc(a.setorNome || '');
+  if (aSetor && !isUnitName(aSetor) && aSetor === target) return true;
+
+  const aAudSub = normalizeLoc(a.auditoria?.subsetorEncontrado || '');
+  if (aAudSub && aAudSub === target) return true;
+
+  // Casos com código de subárea do ASPEC: "004 - COPA" <-> "COPA"
+  const cleanTarget = target.replace(/^[0-9]+[\s\-_.]*/, '').trim();
+  const cleanAssetRoom = assetRoom.replace(/^[0-9]+[\s\-_.]*/, '').trim();
+  const cleanSub = aSub.replace(/^[0-9]+[\s\-_.]*/, '').trim();
+
+  if (cleanTarget.length >= 3) {
+    if (cleanAssetRoom === cleanTarget) return true;
+    if (cleanSub === cleanTarget) return true;
+    if (assetRoom.includes(cleanTarget) && cleanTarget.length >= 4) return true;
+    if (target.includes(cleanAssetRoom) && cleanAssetRoom.length >= 4) return true;
+    if (cleanSub.includes(cleanTarget) && cleanTarget.length >= 4) return true;
+    if (cleanTarget.includes(cleanSub) && cleanSub.length >= 4) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Interface padronizada de Sala / Subárea Física
+ */
+export interface UnitSubareaRoom {
+  id: string;
+  nome: string; // Ex: "004 - COPA", "Consultório 01 – Endodontia Especializada"
+  sigla: string;
+  unidadeId: 'policlinica' | 'ceo' | 'sede-cpsms' | 'cer';
+  unidadeNome: string;
+  responsavelNome?: string;
+  responsavelCargo?: string;
+  responsavelMatricula?: string;
+  bloco?: string;
+  andar?: string;
+  revisada?: boolean;
+  macroSetorNome?: string;
+}
+
+/**
+ * Atribui bloco arquitetônico apropriado para uma sala
+ */
+export function inferArchitecturalBlock(roomName: string, unitId: string, currentBlock?: string): string {
+  if (currentBlock) return currentBlock;
+  const norm = normalizeLoc(roomName);
+
+  if (unitId === 'ceo') {
+    if (norm.includes('copa') || norm.includes('refei') || norm.includes('cafe')) {
+      return 'Apoio, Copa & Convivência';
+    }
+    if (norm.includes('clinic') || norm.includes('consult') || norm.includes('odonto') || norm.includes('endo') || norm.includes('perio') || norm.includes('buco') || norm.includes('pediat') || norm.includes('protes')) {
+      return 'Ala Clínica Odontológica';
+    }
+    if (norm.includes('cme') || norm.includes('esteril') || norm.includes('expurgo') || norm.includes('autoclave') || norm.includes('arsenal')) {
+      return 'CME Odonto – Esterilização';
+    }
+    if (norm.includes('radio') || norm.includes('raio') || norm.includes('panoram') || norm.includes('laudo') || norm.includes('periapical')) {
+      return 'Diagnóstico por Imagem Odontológica';
+    }
+    if (norm.includes('recep') || norm.includes('espera') || norm.includes('same') || norm.includes('prontu') || norm.includes('guiche') || norm.includes('triagem')) {
+      return 'Recepção, Triagem & Atendimento';
+    }
+    if (norm.includes('farm') || norm.includes('almox') || norm.includes('deposito') || norm.includes('resina') || norm.includes('dispens')) {
+      return 'Almoxarifado & Farmácia Odontológica';
+    }
+    if (norm.includes('dire') || norm.includes('gabinete') || norm.includes('reuniao') || norm.includes('coordena')) {
+      return 'Diretoria & Coordenação Geral';
+    }
+    return 'Apoio Operacional';
+  }
+
+  if (unitId === 'policlinica') {
+    if (norm.includes('consult') || norm.includes('clinic') || norm.includes('ambulat') || norm.includes('cardio') || norm.includes('oftalm') || norm.includes('ortop') || norm.includes('ginec') || norm.includes('pediat') || norm.includes('neuro') || norm.includes('dermato') || norm.includes('otorrino')) {
+      return 'Bloco A – Ambulatórios & Consultórios Médicos';
+    }
+    if (norm.includes('raio') || norm.includes('tomo') || norm.includes('imagem') || norm.includes('ultra') || norm.includes('mamo') || norm.includes('endo') || norm.includes('ecg') || norm.includes('holter')) {
+      return 'Bloco B – Centro de Diagnóstico por Imagem';
+    }
+    if (norm.includes('fisio') || norm.includes('reabilita') || norm.includes('cinesio') || norm.includes('fono') || norm.includes('terapia') || norm.includes('cme') || norm.includes('cirurg')) {
+      return 'Bloco C – Reabilitação & Bloco Cirúrgico';
+    }
+    if (norm.includes('farm') || norm.includes('almox') || norm.includes('camara fria') || norm.includes('deposito')) {
+      return 'Bloco D – Farmácia & Almoxarifado Central';
+    }
+    return 'Bloco E – Administrativo & Regulação';
+  }
+
+  return 'Prédio da Sede Administrativa do Consórcio';
+}
+
+/**
+ * Constrói a lista oficial de SALAS (SUBÁREAS) para a Unidade selecionada.
+ * Garante que:
+ * 1. Cada sala seja uma SUBÁREA FÍSICA (ex: 004 - COPA, Consultório 01, etc.), nunca o nome da Unidade.
+ * 2. Todos os bens da Unidade sejam mapeados estritamente para suas subáreas.
+ * 3. Salas vindas de relatórios/importações ASPEC sejam descobertas automaticamente.
+ */
+export function buildUnitSubareas(
+  unitId: 'policlinica' | 'ceo' | 'sede-cpsms' | 'cer',
+  sectors: Sector[],
+  assets: Asset[]
+): (UnitSubareaRoom & {
+  roomAssets: Asset[];
+  totalCount: number;
+  checkedCount: number;
+  missingCount: number;
+  divergentCount: number;
+  totalVal: number;
+  percent: number;
+  visualStatus: 'concluida' | 'em_andamento' | 'pendente' | 'divergencia';
+})[] {
+  // Bens que pertencem a esta Unidade (Área no ASPEC)
+  const unitAssets = assets.filter(a => getAssetUnitId(a) === unitId);
+  const baseSectors = sectors.filter(s => s.unidadeId === unitId);
+
+  const roomsMap = new Map<string, UnitSubareaRoom>();
+
+  const registerSubarea = (
+    roomName: string,
+    meta?: {
+      id?: string;
+      sigla?: string;
+      responsavelNome?: string;
+      responsavelCargo?: string;
+      responsavelMatricula?: string;
+      bloco?: string;
+      andar?: string;
+      revisada?: boolean;
+      macroSetorNome?: string;
+    }
+  ) => {
+    const clean = roomName.trim();
+    if (!clean || isUnitName(clean)) return; // Ignora o nome da Unidade!
+
+    const normKey = normalizeLoc(clean);
+    if (!normKey) return;
+
+    if (!roomsMap.has(normKey)) {
+      const generatedId = meta?.id || `sub-${unitId}-${normKey.replace(/[^a-z0-9]/g, '-')}`;
+      const prefix = unitId === 'ceo' ? 'CEO' : unitId === 'policlinica' ? 'POLI' : 'CPSMS';
+      const cleanAcronym = clean.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase();
+
+      roomsMap.set(normKey, {
+        id: generatedId,
+        nome: clean,
+        sigla: meta?.sigla || `${prefix}-${cleanAcronym}`,
+        unidadeId: unitId,
+        unidadeNome: baseSectors[0]?.unidadeNome || (unitId === 'ceo' ? 'CEO – Centro de Especialidades Odontológicas' : 'Policlínica'),
+        responsavelNome: meta?.responsavelNome || 'Responsável Setorial',
+        responsavelCargo: meta?.responsavelCargo,
+        responsavelMatricula: meta?.responsavelMatricula,
+        bloco: inferArchitecturalBlock(clean, unitId, meta?.bloco),
+        andar: meta?.andar || 'Térreo',
+        revisada: meta?.revisada || false,
+        macroSetorNome: meta?.macroSetorNome
+      });
+    } else {
+      // Atualiza status se revisada
+      if (meta?.revisada) {
+        const existing = roomsMap.get(normKey)!;
+        existing.revisada = true;
+      }
+    }
+  };
+
+  // 1. Extrai EXCLUSIVAMENTE as salas / subáreas dos bens que REALMENTE existem na Unidade (NUNCA inventa salas vazias)
+  unitAssets.forEach(a => {
+    const roomName = getAssetRoomName(a);
+    if (roomName && !isUnitName(roomName)) {
+      registerSubarea(roomName, {
+        responsavelNome: a.responsavelNome,
+        responsavelCargo: a.responsavelCargo,
+        responsavelMatricula: a.responsavelMatricula
+      });
+    }
+  });
+
+  // 2. Inclui apenas salas cadastradas explicitamente pelo usuário (custom)
+  baseSectors.forEach(sec => {
+    if (sec.id && sec.id.startsWith('sec-custom-')) {
+      registerSubarea(sec.nome, {
+        id: sec.id,
+        sigla: sec.sigla,
+        responsavelNome: sec.responsavelNome,
+        responsavelCargo: sec.responsavelCargo,
+        responsavelMatricula: sec.responsavelMatricula,
+        bloco: sec.bloco,
+        andar: sec.andar,
+        revisada: sec.revisada,
+      });
+    }
+  });
+
+  // 3. Mapeia os bens para cada subárea e calcula estatísticas em tempo real
+  const roomsList = Array.from(roomsMap.values())
+    .map(room => {
+      const roomAssets = unitAssets.filter(a => doesAssetMatchRoom(a, room.nome));
+
+      const totalCount = roomAssets.length;
+      const checkedCount = roomAssets.filter(a => a.auditoria?.conferido).length;
+      const missingCount = roomAssets.filter(a => a.auditoria?.statusDivergencia === 'nao_encontrado').length;
+      const divergentCount = roomAssets.filter(a => a.auditoria?.statusDivergencia === 'setor_divergente').length;
+      const totalVal = roomAssets.reduce((sum, a) => sum + (a.valorAquisicao || a.valorBrutoContabil || 0), 0);
+
+      const percent = totalCount > 0 ? Math.round((checkedCount / totalCount) * 100) : (room.revisada ? 100 : 0);
+
+      let visualStatus: 'concluida' | 'em_andamento' | 'pendente' | 'divergencia' = 'pendente';
+      if (room.revisada || (totalCount > 0 && percent === 100)) {
+        visualStatus = 'concluida';
+      } else if (missingCount > 0 || divergentCount > 0) {
+        visualStatus = 'divergencia';
+      } else if (checkedCount > 0) {
+        visualStatus = 'em_andamento';
+      } else {
+        visualStatus = 'pendente';
+      }
+
+      return {
+        ...room,
+        roomAssets,
+        totalCount,
+        checkedCount,
+        missingCount,
+        divergentCount,
+        totalVal,
+        percent,
+        visualStatus,
+      };
+    })
+    // REGRA DE OURO: Elimina qualquer sala sem bens (exceto as criadas manualmente pelo usuário)
+    .filter(room => room.totalCount > 0 || room.id.startsWith('sec-custom-'));
+
+  // Ordena: primeiro salas com bens alocados (maior contagem), depois ordem alfabética
+  roomsList.sort((a, b) => {
+    if (b.totalCount !== a.totalCount) {
+      return b.totalCount - a.totalCount;
+    }
+    return a.nome.localeCompare(b.nome, 'pt-BR');
+  });
+
+  return roomsList;
+}
