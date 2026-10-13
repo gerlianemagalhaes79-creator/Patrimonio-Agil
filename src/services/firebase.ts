@@ -84,11 +84,30 @@ export function subscribeToTerms(callback: (terms: ResponsibilityTerm[]) => void
 }
 
 /**
+ * Remove campos undefined para evitar erros no Firestore
+ */
+function sanitizeFirestoreData<T>(obj: T): T {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) {
+    return obj.map(sanitizeFirestoreData) as any;
+  }
+  const clean: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      clean[key] = sanitizeFirestoreData(value);
+    }
+  }
+  return clean;
+}
+
+/**
  * Save or update single asset in Firestore
  */
 export async function saveAssetToFirestore(asset: Asset): Promise<void> {
   const ref = doc(db, 'assets', asset.id);
-  await setDoc(ref, asset, { merge: true });
+  const cleanAsset = sanitizeFirestoreData(asset);
+  await setDoc(ref, cleanAsset, { merge: true });
 }
 
 /**
@@ -101,7 +120,8 @@ export async function batchSaveAssetsToFirestore(assets: Asset[]): Promise<void>
     const batch = writeBatch(db);
     for (const asset of chunk) {
       const ref = doc(db, 'assets', asset.id);
-      batch.set(ref, asset, { merge: true });
+      const cleanAsset = sanitizeFirestoreData(asset);
+      batch.set(ref, cleanAsset, { merge: true });
     }
     await batch.commit();
   }

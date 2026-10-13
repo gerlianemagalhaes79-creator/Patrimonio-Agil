@@ -17,7 +17,7 @@ import {
   FileText,
   ShieldCheck
 } from 'lucide-react';
-import { doesAssetMatchRoom, doesAssetOfficiallyMatchRoom, doesAssetPhysicallyMatchRoom, getAssetFullLocation, getAssetOfficialRoomName } from '../utils/locationHelper';
+import { doesAssetMatchRoom, doesAssetOfficiallyMatchRoom, doesAssetPhysicallyMatchRoom, getAssetFullLocation, getAssetOfficialRoomName, normalizeLoc } from '../utils/locationHelper';
 import { downloadAspecRoomPdf } from '../utils/aspecPdfGenerator';
 
 interface RoomAspecReportModalProps {
@@ -39,9 +39,33 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
 }) => {
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
+  const leaderChangeInfo = useMemo(() => {
+    try {
+      const rawChanges = typeof localStorage !== 'undefined' ? localStorage.getItem('cpsms_room_leader_changes') : null;
+      if (rawChanges) {
+        const parsed = JSON.parse(rawChanges);
+        const secKey = sector?.nome || '';
+        const secId = (sector && 'id' in sector ? (sector as any).id : '') || '';
+        const found = parsed[secKey] || parsed[secId] || parsed[normalizeLoc(secKey)] || (secId ? parsed[normalizeLoc(secId)] : null);
+        if (found && found.newLeader && found.originalLeader && found.newLeader.trim().toLowerCase() !== found.originalLeader.trim().toLowerCase()) {
+          return found;
+        }
+      }
+    } catch (e) {}
+
+    if (sector && (sector as any).liderAlterado && (sector as any).responsavelOriginalAspec) {
+      return {
+        originalLeader: (sector as any).responsavelOriginalAspec,
+        newLeader: (sector as any).responsavelNome || (sector as any).responsavel || '',
+        newCargo: (sector as any).responsavelCargo
+      };
+    }
+    return null;
+  }, [sector]);
+
   const sectorName = sector?.nome || 'Setor';
-  const sectorResponsavel = (sector && 'responsavelNome' in sector) ? sector.responsavelNome : ((sector && 'responsavel' in sector) ? (sector as any).responsavel : '') || '';
-  const sectorCargo = (sector && 'responsavelCargo' in sector) ? sector.responsavelCargo : 'Responsável pelo Setor';
+  const sectorResponsavel = leaderChangeInfo?.newLeader || ((sector && 'responsavelNome' in sector) ? sector.responsavelNome : ((sector && 'responsavel' in sector) ? (sector as any).responsavel : '')) || '';
+  const sectorCargo = leaderChangeInfo?.newCargo || ((sector && 'responsavelCargo' in sector) ? sector.responsavelCargo : 'Responsável pelo Setor');
   const sectorNameNormalized = sector?.nome ? sector.nome.trim().toLowerCase() : '';
 
   // 1. Bens que estavam cadastrados no ASPEC nesta sala / subárea
@@ -154,6 +178,18 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
     <div><strong>Cargo / Função:</strong> ${currentProfile.cargo || 'Gestora de Patrimônio'}</div>
     <div><strong>Carga Oficial no ASPEC:</strong> ${aspecRegisteredAssets.length} bens (${formatBRL(aspecRegisteredAssets.reduce((s, a) => s + (a.valorAquisicao || 0), 0))})</div>
   </div>
+
+  ${leaderChangeInfo ? `
+  <div style="background: #fef3c7; border: 2px solid #d97706; border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; color: #92400e;">
+    <strong style="font-size: 11px; text-transform: uppercase;">⚠️ ATENÇÃO CONTABILIDADE: NO SISTEMA ASPEC TEM QUE ALTERAR O LÍDER DESTA SALA</strong><br />
+    Durante a conferência física in loco, foi identificada a substituição do líder/responsável setorial desta sala:<br />
+    • <strong>Líder Anterior no ASPEC:</strong> ${leaderChangeInfo.originalLeader}<br />
+    • <strong>Novo Líder (Inventário Físico):</strong> ${leaderChangeInfo.newLeader} (${leaderChangeInfo.newCargo || sectorCargo})<br />
+    <div style="color: #b91c1c; font-weight: bold; margin-top: 4px;">
+      DETERMINAÇÃO OBRIGATÓRIA: NO SISTEMA ASPEC TEM QUE ALTERAR O LÍDER desta sala de "${leaderChangeInfo.originalLeader}" para "${leaderChangeInfo.newLeader}".
+    </div>
+  </div>
+  ` : ''}
 
   <table>
     <thead>
@@ -284,6 +320,18 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
       Presença física confirmada no local. Mantém no ASPEC sem alteração.
     </div>
   </div>
+
+  ${leaderChangeInfo ? `
+  <div style="background: #fef3c7; border: 2px solid #d97706; border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; color: #92400e;">
+    <strong style="font-size: 11px; text-transform: uppercase;">⚠️ ATENÇÃO CONTABILIDADE: NO SISTEMA ASPEC TEM QUE ALTERAR O LÍDER DESTA SALA</strong><br />
+    Durante a conferência física in loco, foi identificada a substituição do líder/responsável setorial desta sala:<br />
+    • <strong>Líder Anterior no ASPEC:</strong> ${leaderChangeInfo.originalLeader}<br />
+    • <strong>Novo Líder (Inventário Físico):</strong> ${leaderChangeInfo.newLeader} (${leaderChangeInfo.newCargo || sectorCargo})<br />
+    <div style="color: #b91c1c; font-weight: bold; margin-top: 4px;">
+      DETERMINAÇÃO OBRIGATÓRIA: NO SISTEMA ASPEC TEM QUE ALTERAR O LÍDER desta sala de "${leaderChangeInfo.originalLeader}" para "${leaderChangeInfo.newLeader}".
+    </div>
+  </div>
+  ` : ''}
 
   <!-- TABELA 1: ENTRADAS / TRANSFERÊNCIAS PARA ESTA SALA -->
   <div class="section-title">
@@ -600,6 +648,30 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
         {/* Body */}
         <div className="printable-report-scroll-container overflow-y-auto flex-1 p-4 sm:p-6 space-y-5 text-xs text-slate-800 dark:text-slate-200">
           
+          {leaderChangeInfo && (
+            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/50 border-2 border-amber-500 text-amber-950 dark:text-amber-200 space-y-1.5 animate-in fade-in">
+              <div className="flex items-center gap-2 font-black text-xs sm:text-sm text-amber-900 dark:text-amber-300 uppercase tracking-wide">
+                <span>⚠️ ATENÇÃO CONTABILIDADE: NO SISTEMA ASPEC TEM QUE ALTERAR O LÍDER DESTA SALA</span>
+              </div>
+              <p className="text-xs text-amber-900 dark:text-amber-200">
+                Foi registrada alteração do responsável setorial pela guarda da carga patrimonial desta sala:
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1">
+                <div className="p-2.5 rounded-lg bg-white/70 dark:bg-slate-900/70 border border-amber-200 dark:border-amber-800">
+                  <span className="text-[10px] uppercase font-bold text-slate-500 block">Líder Anterior no ASPEC:</span>
+                  <strong className="text-slate-800 dark:text-slate-200">{leaderChangeInfo.originalLeader}</strong>
+                </div>
+                <div className="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-300 dark:border-emerald-800">
+                  <span className="text-[10px] uppercase font-bold text-emerald-700 dark:text-emerald-400 block">Novo Líder Designado:</span>
+                  <strong className="text-emerald-900 dark:text-emerald-200">{leaderChangeInfo.newLeader} ({leaderChangeInfo.newCargo || sectorCargo})</strong>
+                </div>
+              </div>
+              <p className="text-[11px] font-bold text-red-700 dark:text-red-400 pt-1">
+                AÇÃO OBRIGATÓRIA NO ASPEC: NO ASPEC TEM QUE ALTERAR O LÍDER desta sala de "{leaderChangeInfo.originalLeader}" para "{leaderChangeInfo.newLeader}" e emitir novo Termo de Guarda.
+              </p>
+            </div>
+          )}
+
           {isRoomAllOk ? (
             <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border-2 border-emerald-500 text-emerald-950 dark:text-emerald-200 space-y-1">
               <div className="flex items-center gap-2 font-black text-sm text-emerald-800 dark:text-emerald-300">
@@ -607,7 +679,7 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
                 <span>SALA 100% CONFORME COM O ASPEC — SEM DIVERGÊNCIAS</span>
               </div>
               <p className="text-xs text-emerald-900 dark:text-emerald-300 leading-relaxed">
-                Todos os <strong>{aspecRegisteredAssets.length}</strong> bens cadastrados nesta sala no ASPEC foram devidamente localizados e confirmados in loco. Não há entradas de outras salas, não há saídas e não há itens sem registro contábil. Esta sala dispensa qualquer alteração no sistema ASPEC!
+                Todos os <strong>{aspecRegisteredAssets.length}</strong> bens cadastrados nesta sala no ASPEC foram devidamente localizados e confirmados in loco. Não há entradas de outras salas, não há saídas e não há itens sem registro contábil. Esta sala dispensa qualquer alteração de bens no sistema ASPEC!
               </p>
             </div>
           ) : (

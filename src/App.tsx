@@ -60,22 +60,33 @@ export default function App() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [sectors, setSectors] = useState<Sector[]>(() => {
     try {
-      const saved = localStorage.getItem('cpsms_custom_sectors');
-      const reviewedRaw = localStorage.getItem('cpsms_reviewed_rooms');
+      const CLEAN_RESET_KEY = 'patrimonio_cpsms_clean_reset_v3';
+      const isCleanResetDone = localStorage.getItem(CLEAN_RESET_KEY) === 'done';
+
+      if (!isCleanResetDone) {
+        // Clear any old mock conferences or fictitious reviewed rooms
+        localStorage.removeItem('cpsms_reviewed_rooms');
+        localStorage.removeItem('cpsms_room_consolidated');
+        localStorage.removeItem('cpsms_room_drafts');
+        localStorage.removeItem('patrimonio_cpsms_reviewed_rooms_v1');
+      }
+
+      const saved = isCleanResetDone ? localStorage.getItem('cpsms_custom_sectors') : null;
+      const reviewedRaw = isCleanResetDone ? localStorage.getItem('cpsms_reviewed_rooms') : null;
       const reviewedMap: Record<string, any> = reviewedRaw ? JSON.parse(reviewedRaw) : {};
 
       const map = new Map<string, Sector>();
       CPSMS_SECTORS.forEach(s => {
-        const isRev = Boolean(
+        const isRev = isCleanResetDone && Boolean(
           s.revisada || 
           reviewedMap[s.id]?.revisada || 
           reviewedMap[s.nome]?.revisada || 
           reviewedMap[normalizeLoc(s.nome)]?.revisada
         );
-        map.set(s.id, isRev ? { ...s, revisada: true } : s);
+        map.set(s.id, isRev ? { ...s, revisada: true } : { ...s, revisada: false });
       });
 
-      if (saved) {
+      if (saved && isCleanResetDone) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
           parsed.forEach((s: Sector) => {
@@ -93,35 +104,71 @@ export default function App() {
       }
 
       // Add any reviewed rooms that might not have been in CPSMS_SECTORS
-      Object.entries(reviewedMap).forEach(([k, v]: [string, any]) => {
-        if (v && v.revisada) {
-          const roomName = v.nome || k;
-          const found = Array.from(map.values()).find(
-            s => s.id === k || normalizeLoc(s.nome) === normalizeLoc(roomName)
-          );
-          if (found) {
-            found.revisada = true;
-          } else {
-            const id = k.startsWith('room-') || k.startsWith('sub-') || k.startsWith('sec-') 
-              ? k 
-              : `sec-custom-${normalizeLoc(roomName).replace(/[^a-z0-9]/g, '-')}`;
-            map.set(id, {
-              id,
-              nome: roomName,
-              sigla: roomName.slice(0, 8).toUpperCase(),
-              unidadeId: 'policlinica',
-              unidadeNome: 'Policlínica',
-              responsavelNome: v.responsavelNome || 'Responsável Setorial',
-              responsavelCargo: v.responsavelCargo || 'Detentor da Carga',
-              responsavelMatricula: v.responsavelMatricula || 'CPSMS',
-              subsetores: [],
-              revisada: true,
-              dataRevisao: v.dataRevisao,
-              responsavelRevisao: v.responsavelRevisao
+      if (isCleanResetDone) {
+        Object.entries(reviewedMap).forEach(([k, v]: [string, any]) => {
+          if (v && v.revisada) {
+            const rawName = v.nome || k;
+            const roomName = rawName.startsWith('sub-') 
+              ? rawName.replace(/^sub-[a-z0-9]+-/, '').replace(/-/g, ' ') 
+              : rawName;
+            const found = Array.from(map.values()).find(
+              s => s.id === k || 
+                   normalizeLoc(s.nome) === normalizeLoc(roomName) || 
+                   normalizeLoc(s.nome) === normalizeLoc(rawName) ||
+                   normalizeLoc(s.id) === normalizeLoc(k)
+            );
+            if (found) {
+              found.revisada = true;
+              found.dataRevisao = v.dataRevisao || found.dataRevisao;
+              found.responsavelRevisao = v.responsavelRevisao || found.responsavelRevisao;
+            } else {
+              const id = k.startsWith('room-') || k.startsWith('sub-') || k.startsWith('sec-') 
+                ? k 
+                : `sec-custom-${normalizeLoc(roomName).replace(/[^a-z0-9]/g, '-')}`;
+              map.set(id, {
+                id,
+                nome: roomName,
+                sigla: roomName.slice(0, 8).toUpperCase(),
+                unidadeId: 'policlinica',
+                unidadeNome: 'Policlínica',
+                responsavelNome: v.responsavelNome || 'Responsável Setorial',
+                responsavelCargo: v.responsavelCargo || 'Detentor da Carga',
+                responsavelMatricula: v.responsavelMatricula || 'CPSMS',
+                subsetores: [],
+                revisada: true,
+                dataRevisao: v.dataRevisao,
+                responsavelRevisao: v.responsavelRevisao
+              });
+            }
+          }
+        });
+      }
+
+      // Apply any saved leader changes
+      const leaderChangesRaw = localStorage.getItem('cpsms_room_leader_changes');
+      if (leaderChangesRaw) {
+        try {
+          const leaderMap = JSON.parse(leaderChangesRaw);
+          if (typeof leaderMap === 'object' && leaderMap !== null) {
+            Object.entries(leaderMap).forEach(([k, v]: [string, any]) => {
+              if (v && v.newLeader && v.originalLeader && v.newLeader.trim() !== v.originalLeader.trim()) {
+                const targetSector = Array.from(map.values()).find(
+                  s => s.id === k || normalizeLoc(s.nome) === normalizeLoc(k)
+                );
+                if (targetSector) {
+                  targetSector.responsavelNome = v.newLeader;
+                  targetSector.responsavelCargo = v.newCargo || targetSector.responsavelCargo;
+                  targetSector.responsavelOriginalAspec = v.originalLeader;
+                  targetSector.liderAlterado = true;
+                  targetSector.dataAlteracaoLider = v.changedAt;
+                }
+              }
             });
           }
+        } catch (e) {
+          // ignore
         }
-      });
+      }
 
       return Array.from(map.values());
     } catch (e) {
@@ -184,13 +231,25 @@ export default function App() {
           loadTransfersFromDB(),
           loadTermsFromDB()
         ]);
+        const CLEAN_RESET_KEY = 'patrimonio_cpsms_clean_reset_v3';
+        const isCleanResetDone = localStorage.getItem(CLEAN_RESET_KEY) === 'done';
+
         let effectiveAssets = loadedAssets;
-        if ((!effectiveAssets || effectiveAssets.length <= 1) && INITIAL_ASSETS.length > 1) {
+        if (!isCleanResetDone) {
+          // RESET CLEAN SLATE: Start completely pending with genuine assets (zero fake conferences)
+          effectiveAssets = INITIAL_ASSETS.map(a => ({
+            ...a,
+            auditoria: {
+              conferido: false
+            }
+          }));
+          saveAssetsToDB(effectiveAssets).catch(console.warn);
+          localStorage.setItem(CLEAN_RESET_KEY, 'done');
+        } else if ((!effectiveAssets || effectiveAssets.length <= 1) && INITIAL_ASSETS.length > 1) {
           effectiveAssets = INITIAL_ASSETS;
           saveAssetsToDB(INITIAL_ASSETS).catch(console.warn);
         } else if (Array.isArray(effectiveAssets) && effectiveAssets.length > 1) {
-          // Garante que bens oficiais de novas salas (ex: CEO, CME, consultórios adicionais)
-          // sejam mesclados para o usuário ter o inventário físico completo
+          // Garante que bens oficiais de novas salas sejam mesclados
           const existingIds = new Set(effectiveAssets.map(a => a.id));
           const existingTombos = new Set(effectiveAssets.map(a => (a.tombamento || '').toString().trim()));
           const missingAssets = INITIAL_ASSETS.filter(a => {
@@ -222,10 +281,39 @@ export default function App() {
 
         // Subscribe to real-time Cloud Firestore collections
         let initialAssetsCheckDone = false;
+        const CLEAN_RESET_KEY = 'patrimonio_cpsms_clean_reset_v3';
+        const isCleanResetJustRun = !localStorage.getItem(CLEAN_RESET_KEY + '_cloud_synced');
+
         unsubscribeAssets = subscribeToAssets((cloudAssets) => {
+          if (isCleanResetJustRun && localAssets.length > 0) {
+            // First time clean slate: force overwrite cloud with clean zero-conference assets
+            batchSaveAssetsToFirestore(localAssets).catch(console.warn);
+            localStorage.setItem(CLEAN_RESET_KEY + '_cloud_synced', 'true');
+            return;
+          }
           if (cloudAssets && cloudAssets.length > 0) {
-            setAssets(cloudAssets);
-            saveAssetsToDB(cloudAssets);
+            setAssets(prev => {
+              if (!prev || prev.length === 0) {
+                saveAssetsToDB(cloudAssets);
+                return cloudAssets;
+              }
+              const cloudMap = new Map(cloudAssets.map(c => [c.id, c]));
+              const merged = prev.map(localA => {
+                const cloudA = cloudMap.get(localA.id);
+                if (!cloudA) return localA;
+                // Preserva conferência local se na nuvem ainda não tiver sido sincronizada
+                if (localA.auditoria?.conferido && !cloudA.auditoria?.conferido) {
+                  return localA;
+                }
+                return cloudA;
+              });
+              const localIds = new Set(prev.map(p => p.id));
+              cloudAssets.forEach(ca => {
+                if (!localIds.has(ca.id)) merged.push(ca);
+              });
+              saveAssetsToDB(merged);
+              return merged;
+            });
           } else if (!initialAssetsCheckDone && localAssets.length > 0) {
             // First time sync: migrate existing local IndexedDB assets to Firebase Firestore
             batchSaveAssetsToFirestore(localAssets).catch(e => console.warn('Firebase initial migration error:', e));
@@ -439,34 +527,38 @@ export default function App() {
       responsavelConferencia: string;
     }
   ) => {
-    setAssets(prev => prev.map(a => {
-      if (a.id === assetId) {
-        const audited: Asset = {
-          ...a,
-          setorOriginalAspec: data.setorOriginalAspec || a.setorOriginalAspec || a.setorNome,
-          unidadeOriginalAspec: data.unidadeOriginalAspec || a.unidadeOriginalAspec || a.unidadeNome,
-          setorNome: data.statusDivergencia === 'setor_divergente' && data.setorEncontrado ? data.setorEncontrado : a.setorNome,
-          subsetorNome: data.statusDivergencia === 'setor_divergente' && data.subsetorEncontrado ? data.subsetorEncontrado : a.subsetorNome,
-          estado: data.novoEstado || a.estado,
-          auditoria: {
-            conferido: data.conferido,
-            dataConferencia: new Date().toISOString().slice(0, 16).replace('T', ' '),
-            responsavelConferencia: data.responsavelConferencia,
-            statusDivergencia: data.statusDivergencia,
-            unidadeEncontrada: data.unidadeEncontrada,
-            setorEncontrado: data.setorEncontrado,
-            subsetorEncontrado: data.subsetorEncontrado,
+    setAssets(prev => {
+      const updated = prev.map(a => {
+        if (a.id === assetId) {
+          const audited: Asset = {
+            ...a,
             setorOriginalAspec: data.setorOriginalAspec || a.setorOriginalAspec || a.setorNome,
             unidadeOriginalAspec: data.unidadeOriginalAspec || a.unidadeOriginalAspec || a.unidadeNome,
-            divergenciaConfirmada: data.divergenciaConfirmada,
-            observacaoAuditoria: data.observacaoAuditoria,
-          }
-        };
-        saveAssetToFirestore(audited).catch(e => console.warn('Firestore audit err:', e));
-        return audited;
-      }
-      return a;
-    }));
+            setorNome: data.statusDivergencia === 'setor_divergente' && data.setorEncontrado ? data.setorEncontrado : a.setorNome,
+            subsetorNome: data.statusDivergencia === 'setor_divergente' && data.subsetorEncontrado ? data.subsetorEncontrado : a.subsetorNome,
+            estado: data.novoEstado || a.estado,
+            auditoria: {
+              conferido: data.conferido,
+              dataConferencia: new Date().toISOString().slice(0, 16).replace('T', ' '),
+              responsavelConferencia: data.responsavelConferencia,
+              statusDivergencia: data.statusDivergencia,
+              unidadeEncontrada: data.unidadeEncontrada,
+              setorEncontrado: data.setorEncontrado,
+              subsetorEncontrado: data.subsetorEncontrado,
+              setorOriginalAspec: data.setorOriginalAspec || a.setorOriginalAspec || a.setorNome,
+              unidadeOriginalAspec: data.unidadeOriginalAspec || a.unidadeOriginalAspec || a.unidadeNome,
+              divergenciaConfirmada: data.divergenciaConfirmada,
+              observacaoAuditoria: data.observacaoAuditoria,
+            }
+          };
+          saveAssetToFirestore(audited).catch(e => console.warn('Firestore audit err:', e));
+          return audited;
+        }
+        return a;
+      });
+      saveAssetsToDB(updated).catch(e => console.warn('IndexedDB audit err:', e));
+      return updated;
+    });
   };
 
   const handleConsolidateRoomOfficial = (sectorName: string, protocolo: string, parecer: string) => {
@@ -586,17 +678,21 @@ export default function App() {
     });
   };
 
-  const handleConcludeRoom = (sectorIdOrName: string) => {
+  const handleConcludeRoom = (sectorIdOrName: string, explicitRoomName?: string) => {
     const t0 = performance.now();
     setIsProcessing(true);
 
+    const normTarget = normalizeLoc(sectorIdOrName);
     const targetSector = sectors.find(s => 
       s.id === sectorIdOrName || 
-      normalizeLoc(s.nome) === normalizeLoc(sectorIdOrName) ||
+      normalizeLoc(s.nome) === normTarget ||
       s.nome.trim().toLowerCase() === sectorIdOrName.trim().toLowerCase()
     );
 
-    const sectorName = targetSector ? targetSector.nome : sectorIdOrName;
+    let sectorName = explicitRoomName || (targetSector ? targetSector.nome : sectorIdOrName);
+    if (sectorName.startsWith('sub-')) {
+      sectorName = sectorName.replace(/^sub-[a-z0-9]+-/, '').replace(/-/g, ' ');
+    }
     const sectorNameLower = sectorName.trim().toLowerCase();
     const sectorNorm = normalizeLoc(sectorName);
 
@@ -630,7 +726,7 @@ export default function App() {
           sigla: sectorName.slice(0, 8).toUpperCase(),
           unidadeId: (targetSector?.unidadeId || 'policlinica') as any,
           unidadeNome: targetSector?.unidadeNome || 'Policlínica',
-          responsavelNome: targetSector?.responsavelNome || 'Responsável Setorial',
+          responsavelNome: targetSector?.responsavelNome || currentProfile.nome || 'Responsável Setorial',
           responsavelCargo: targetSector?.responsavelCargo || 'Detentor da Carga',
           responsavelMatricula: targetSector?.responsavelMatricula || 'CPSMS',
           subsetores: [],
@@ -648,7 +744,7 @@ export default function App() {
       return updated;
     });
 
-    // 2. Persist in cpsms_reviewed_rooms registry
+    // 2. Persist in cpsms_reviewed_rooms registry with all variants of key
     try {
       const raw = localStorage.getItem('cpsms_reviewed_rooms');
       const reviewedMap = raw ? JSON.parse(raw) : {};
@@ -656,12 +752,17 @@ export default function App() {
         revisada: true,
         dataRevisao: new Date().toISOString(),
         responsavelRevisao: currentProfile.nome,
-        nome: sectorName
+        nome: sectorName,
+        id: sectorIdOrName
       };
       reviewedMap[sectorName] = revData;
       reviewedMap[sectorNorm] = revData;
       if (sectorIdOrName) {
         reviewedMap[sectorIdOrName] = revData;
+        reviewedMap[normTarget] = revData;
+      }
+      if (targetSector?.id) {
+        reviewedMap[targetSector.id] = revData;
       }
       localStorage.setItem('cpsms_reviewed_rooms', JSON.stringify(reviewedMap));
     } catch (e) {
@@ -705,11 +806,98 @@ export default function App() {
     setIsProcessing(false);
   };
 
+  const handleReopenRoom = (sectorIdOrName: string, explicitRoomName?: string) => {
+    const normTarget = normalizeLoc(sectorIdOrName);
+    const targetSector = sectors.find(s => 
+      s.id === sectorIdOrName || 
+      normalizeLoc(s.nome) === normTarget ||
+      s.nome.trim().toLowerCase() === sectorIdOrName.trim().toLowerCase()
+    );
+    let sectorName = explicitRoomName || (targetSector ? targetSector.nome : sectorIdOrName);
+    if (sectorName.startsWith('sub-')) {
+      sectorName = sectorName.replace(/^sub-[a-z0-9]+-/, '').replace(/-/g, ' ');
+    }
+    const sectorNorm = normalizeLoc(sectorName);
+
+    // 1. Unmark in sectors state
+    setSectors(prev => {
+      const updated = prev.map(s => {
+        if (
+          s.id === sectorIdOrName || 
+          normalizeLoc(s.nome) === sectorNorm || 
+          s.nome.trim().toLowerCase() === sectorName.trim().toLowerCase()
+        ) {
+          return {
+            ...s,
+            revisada: false,
+          };
+        }
+        return s;
+      });
+      try {
+        localStorage.setItem('cpsms_custom_sectors', JSON.stringify(updated));
+      } catch (e) {
+        console.warn(e);
+      }
+      return updated;
+    });
+
+    // 2. Remove from cpsms_reviewed_rooms
+    try {
+      const raw = localStorage.getItem('cpsms_reviewed_rooms');
+      if (raw) {
+        const reviewedMap = JSON.parse(raw);
+        delete reviewedMap[sectorName];
+        delete reviewedMap[sectorNorm];
+        delete reviewedMap[sectorIdOrName];
+        delete reviewedMap[normTarget];
+        if (targetSector?.id) delete reviewedMap[targetSector.id];
+        localStorage.setItem('cpsms_reviewed_rooms', JSON.stringify(reviewedMap));
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+  };
+
   const handleClearAllData = async () => {
     await clearAllDB();
     setAssets([]);
     setTransfers([]);
     setTerms([]);
+  };
+
+  const handleResetAllAuditsToCleanSlate = async () => {
+    setIsProcessing(true);
+    try {
+      localStorage.removeItem('cpsms_reviewed_rooms');
+      localStorage.removeItem('cpsms_room_consolidated');
+      localStorage.removeItem('cpsms_room_drafts');
+      localStorage.removeItem('patrimonio_cpsms_reviewed_rooms_v1');
+
+      const cleanSectors = CPSMS_SECTORS.map(s => ({
+        ...s,
+        revisada: false,
+        dataRevisao: undefined,
+        responsavelRevisao: undefined
+      }));
+      setSectors(cleanSectors);
+
+      const cleanAssets = assets.map(a => ({
+        ...a,
+        auditoria: {
+          conferido: false
+        }
+      }));
+      setAssets(cleanAssets);
+      await saveAssetsToDB(cleanAssets);
+      if (firebaseStatus === 'connected') {
+        await batchSaveAssetsToFirestore(cleanAssets);
+      }
+    } catch (err) {
+      console.error('Erro ao reiniciar conferências:', err);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleSmartImportBatch = (importedList: Asset[], mode: 'update' | 'replace' = 'update') => {
@@ -936,7 +1124,10 @@ export default function App() {
             onConsolidateRoom={handleConsolidateRoomOfficial}
             onRecordQueryDuration={(dur) => setLastQueryDurationMs(Math.max(1, Math.round(dur)))}
             onConcludeRoom={handleConcludeRoom}
+            onReopenRoom={handleReopenRoom}
             onUpdateSector={handleUpdateSector}
+            onAddNewLocation={handleAddNewLocation}
+            onResetAllAudits={handleResetAllAuditsToCleanSlate}
           />
         )}
 

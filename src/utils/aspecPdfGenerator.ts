@@ -115,7 +115,7 @@ export function downloadAspecRoomPdf({
 
   // 0. Detect Leader Change (Líder alterado in loco vs cadastrado no ASPEC)
   let leaderChangeInfo: { originalLeader: string; newLeader: string; newCargo?: string } | null = null;
-  if (leaderChange && leaderChange.newLeader && leaderChange.originalLeader && leaderChange.newLeader.trim() !== leaderChange.originalLeader.trim()) {
+  if (leaderChange && leaderChange.newLeader && leaderChange.originalLeader && leaderChange.newLeader.trim().toLowerCase() !== leaderChange.originalLeader.trim().toLowerCase()) {
     leaderChangeInfo = leaderChange;
   } else {
     try {
@@ -124,7 +124,7 @@ export function downloadAspecRoomPdf({
         const parsed = JSON.parse(rawChanges);
         const secKey = sector?.nome || '';
         const secId = (sector && 'id' in sector ? (sector as any).id : '') || '';
-        const foundChange = parsed[secKey] || parsed[secId] || parsed[normalizeLoc(secKey)];
+        const foundChange = parsed[secKey] || parsed[secId] || parsed[normalizeLoc(secKey)] || (secId ? parsed[normalizeLoc(secId)] : null);
         if (foundChange && foundChange.newLeader && foundChange.originalLeader && foundChange.newLeader.trim().toLowerCase() !== foundChange.originalLeader.trim().toLowerCase()) {
           leaderChangeInfo = {
             originalLeader: foundChange.originalLeader,
@@ -148,6 +148,14 @@ export function downloadAspecRoomPdf({
         newCargo: (sector as any).responsavelCargo
       };
     }
+  }
+
+  if (!leaderChangeInfo && sector && (sector as any).liderAlterado && (sector as any).responsavelOriginalAspec) {
+    leaderChangeInfo = {
+      originalLeader: (sector as any).responsavelOriginalAspec,
+      newLeader: (sector as any).responsavelNome || (sector as any).responsavel || '',
+      newCargo: (sector as any).responsavelCargo
+    };
   }
 
   const sectorResponsavel = leaderChangeInfo?.newLeader ||
@@ -359,7 +367,7 @@ export function downloadAspecRoomPdf({
   if (leaderChangeInfo) {
     doc.setFillColor(254, 243, 199); // amber-100
     doc.setDrawColor(217, 119, 6); // amber-600
-    doc.roundedRect(10, currentY, pageWidth - 20, 22, 1.5, 1.5, 'FD');
+    doc.roundedRect(10, currentY, pageWidth - 20, 24, 1.5, 1.5, 'FD');
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8.5);
@@ -369,25 +377,25 @@ export function downloadAspecRoomPdf({
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7.2);
     doc.setTextColor(120, 53, 15); // amber-950
-    doc.text('Foi formalizada a substituição do líder/responsável setorial pela guarda da carga patrimonial nesta sala:', 14, currentY + 8.5);
+    doc.text('Durante a vistoria in loco, foi formalizada a substituição do líder/responsável setorial pela guarda da carga patrimonial:', 14, currentY + 8.5);
 
     doc.setFont('helvetica', 'bold');
-    doc.text('• LÍDER ANTERIOR REGISTRADO NO ASPEC:', 14, currentY + 12.5);
+    doc.text('• LÍDER ANTERIOR NO ASPEC:', 14, currentY + 12.5);
     doc.setFont('helvetica', 'normal');
-    doc.text(`${leaderChangeInfo.originalLeader}`, 76, currentY + 12.5);
+    doc.text(`${leaderChangeInfo.originalLeader} (Titular Anterior)`, 62, currentY + 12.5);
 
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(6, 95, 70);
-    doc.text('• NOVO LÍDER DESIGNADO (INVENTÁRIO FÍSICO):', 14, currentY + 16.5);
+    doc.text('• NOVO LÍDER (INVENTÁRIO FÍSICO):', 14, currentY + 16.5);
     doc.setFont('helvetica', 'bold');
-    doc.text(`${leaderChangeInfo.newLeader} (${sectorCargo}) — NOVO TITULAR DA SALA`, 83, currentY + 16.5);
+    doc.text(`${leaderChangeInfo.newLeader} (${sectorCargo}) — NOVO TITULAR`, 68, currentY + 16.5);
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.8);
+    doc.setFontSize(7.2);
     doc.setTextColor(185, 28, 28); // red-700
-    doc.text('AÇÃO OBRIGATÓRIA NO ASPEC: O Setor de Contabilidade deve alterar o titular desta sala no ASPEC para emissão do Termo de Guarda.', 14, currentY + 20.2);
+    doc.text(`DETERMINAÇÃO OBRIGATÓRIA: NO SISTEMA ASPEC TEM QUE ALTERAR O LÍDER desta sala de "${leaderChangeInfo.originalLeader}" para "${leaderChangeInfo.newLeader}".`, 14, currentY + 21);
 
-    currentY += 25;
+    currentY += 27;
   }
 
   // Helper to format responsible for an asset

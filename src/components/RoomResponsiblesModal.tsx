@@ -43,11 +43,23 @@ export const RoomResponsiblesModal: React.FC<RoomResponsiblesModalProps> = ({
   const [savedFeedback, setSavedFeedback] = useState<string | null>(null);
 
   const sectorName = sector?.nome || 'Sala';
+  let savedOriginalFromStorage = '';
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('cpsms_room_leader_changes') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const found = parsed[sector?.nome || ''] || (sector && 'id' in sector ? parsed[sector.id] : null);
+      if (found && found.originalLeader) {
+        savedOriginalFromStorage = found.originalLeader;
+      }
+    }
+  } catch(e) {}
+
   const originalLeaderName = (sector && 'responsavelOriginalAspec' in sector && sector.responsavelOriginalAspec)
     ? sector.responsavelOriginalAspec
-    : ((sector && 'responsavelNome' in sector) 
+    : (savedOriginalFromStorage || ((sector && 'responsavelNome' in sector) 
         ? sector.responsavelNome 
-        : ((sector && 'responsavel' in sector) ? (sector as any).responsavel : '')) || 'Líder do Setor';
+        : ((sector && 'responsavel' in sector) ? (sector as any).responsavel : '')) || 'Líder do Setor');
 
   const sectorLeaderName = (sector && 'responsavelNome' in sector) 
     ? sector.responsavelNome 

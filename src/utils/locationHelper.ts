@@ -327,6 +327,9 @@ export interface UnitSubareaRoom {
   responsavelNome?: string;
   responsavelCargo?: string;
   responsavelMatricula?: string;
+  responsavelOriginalAspec?: string;
+  liderAlterado?: boolean;
+  dataAlteracaoLider?: string;
   bloco?: string;
   andar?: string;
   revisada?: boolean;
@@ -436,6 +439,24 @@ export function buildUnitSubareas(
     // ignore
   }
 
+  // Mapa de alterações de líderes (Líder alterado in loco)
+  const leaderChangesMap = new Map<string, { originalLeader: string; newLeader: string; newCargo?: string; changedAt?: string }>();
+  try {
+    const rawLeader = typeof localStorage !== 'undefined' ? localStorage.getItem('cpsms_room_leader_changes') : null;
+    if (rawLeader) {
+      const parsed = JSON.parse(rawLeader);
+      if (typeof parsed === 'object' && parsed !== null) {
+        Object.entries(parsed).forEach(([k, v]: [string, any]) => {
+          if (v && v.newLeader && v.originalLeader && v.newLeader.trim() !== v.originalLeader.trim()) {
+            leaderChangesMap.set(normalizeLoc(k), v);
+          }
+        });
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+
   // Setores base que já foram marcados como revisados
   baseSectors.forEach(sec => {
     if (sec.revisada) {
@@ -449,6 +470,22 @@ export function buildUnitSubareas(
           revisada: true,
           dataRevisao: sec.dataRevisao,
           responsavelRevisao: sec.responsavelRevisao
+        });
+      }
+    }
+    if (sec.liderAlterado && sec.responsavelOriginalAspec) {
+      leaderChangesMap.set(normalizeLoc(sec.nome), {
+        originalLeader: sec.responsavelOriginalAspec,
+        newLeader: sec.responsavelNome,
+        newCargo: sec.responsavelCargo,
+        changedAt: sec.dataAlteracaoLider
+      });
+      if (sec.id) {
+        leaderChangesMap.set(normalizeLoc(sec.id), {
+          originalLeader: sec.responsavelOriginalAspec,
+          newLeader: sec.responsavelNome,
+          newCargo: sec.responsavelCargo,
+          changedAt: sec.dataAlteracaoLider
         });
       }
     }
@@ -544,10 +581,14 @@ export function buildUnitSubareas(
       const divergentCount = roomAssets.filter(a => a.auditoria?.statusDivergencia === 'setor_divergente').length;
       const totalVal = roomAssets.reduce((sum, a) => sum + (a.valorAquisicao || a.valorBrutoContabil || 0), 0);
 
-      const isRoomRevisada = room.revisada || 
+      const cleanSubName = room.id && room.id.startsWith('sub-') ? room.id.replace(/^sub-[a-z0-9]+-/, '').replace(/-/g, ' ') : '';
+      const isRoomRevisada = Boolean(
+        room.revisada || 
         reviewedRoomsMap.has(normalizeLoc(room.nome)) || 
         (room.id ? reviewedRoomsMap.has(normalizeLoc(room.id)) : false) ||
-        (totalCount > 0 && checkedCount === totalCount);
+        (cleanSubName ? reviewedRoomsMap.has(normalizeLoc(cleanSubName)) : false) ||
+        (totalCount > 0 && checkedCount === totalCount)
+      );
 
       const percent = totalCount > 0 ? Math.round((checkedCount / totalCount) * 100) : (isRoomRevisada ? 100 : 0);
 
@@ -562,8 +603,21 @@ export function buildUnitSubareas(
         visualStatus = 'pendente';
       }
 
+      const leaderChange = leaderChangesMap.get(normalizeLoc(room.nome)) || 
+        (room.id ? leaderChangesMap.get(normalizeLoc(room.id)) : undefined);
+      
+      const effectiveResponsavel = leaderChange?.newLeader || room.responsavelNome;
+      const effectiveCargo = leaderChange?.newCargo || room.responsavelCargo;
+      const effectiveOriginalAspec = leaderChange?.originalLeader || room.responsavelOriginalAspec;
+      const effectiveLiderAlterado = Boolean(leaderChange || room.liderAlterado);
+
       return {
         ...room,
+        responsavelNome: effectiveResponsavel,
+        responsavelCargo: effectiveCargo,
+        responsavelOriginalAspec: effectiveOriginalAspec,
+        liderAlterado: effectiveLiderAlterado,
+        dataAlteracaoLider: leaderChange?.changedAt || room.dataAlteracaoLider,
         revisada: isRoomRevisada,
         roomAssets,
         totalCount,
@@ -575,8 +629,14 @@ export function buildUnitSubareas(
         visualStatus,
       };
     })
-    // REGRA DE OURO: Elimina qualquer sala sem bens (exceto as criadas manualmente pelo usuário ou já revisadas)
-    .filter(room => room.totalCount > 0 || room.revisada || room.id.startsWith('sec-custom-'));
+    // REGRA DE OURO: Mantém todas as salas com bens, ou já revisadas (OK), ou customizadas, ou pré-cadastradas na unidade
+    .filter(room => 
+      room.totalCount > 0 || 
+      room.revisada || 
+      room.id.startsWith('sec-custom-') || 
+      reviewedRoomsMap.has(normalizeLoc(room.nome)) ||
+      baseSectors.some(s => normalizeLoc(s.nome) === normalizeLoc(room.nome))
+    );
 
   // Ordena: primeiro salas com bens alocados (maior contagem), depois ordem alfabética
   roomsList.sort((a, b) => {

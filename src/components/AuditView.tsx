@@ -40,7 +40,8 @@ import {
   CheckSquare,
   Users,
   UserCheck,
-  Edit3
+  Edit3,
+  RotateCcw
 } from 'lucide-react';
 import { MacroMicroInventoryReportModal } from './MacroMicroInventoryReportModal';
 import { AspecReconciliationModal } from './AspecReconciliationModal';
@@ -50,7 +51,8 @@ import { UnlocatedAssetsReportModal } from './UnlocatedAssetsReportModal';
 import { AspecOfficializationModal } from './AspecOfficializationModal';
 import { RoomComparisonModal } from './RoomComparisonModal';
 import { RoomResponsiblesModal } from './RoomResponsiblesModal';
-import { getAssetUnitId, getAssetRoomName, doesAssetMatchRoom, isUnitName, buildUnitSubareas, getAssetFullLocation, doesAssetOfficiallyMatchRoom, doesAssetPhysicallyMatchRoom } from '../utils/locationHelper';
+import { NewLocationModal } from './NewLocationModal';
+import { getAssetUnitId, getAssetRoomName, doesAssetMatchRoom, isUnitName, buildUnitSubareas, getAssetFullLocation, doesAssetOfficiallyMatchRoom, doesAssetPhysicallyMatchRoom, normalizeLoc } from '../utils/locationHelper';
 import { downloadAspecRoomPdf } from '../utils/aspecPdfGenerator';
 
 interface AuditViewProps {
@@ -81,7 +83,11 @@ interface AuditViewProps {
   onUpdateAsset?: (asset: Asset) => void;
   onConsolidateRoom?: (sectorName: string, protocolo: string, parecer: string) => void;
   onRecordQueryDuration?: (durationMs: number) => void;
-  onConcludeRoom?: (sectorIdOrName: string) => void;
+  onConcludeRoom?: (sectorIdOrName: string, explicitRoomName?: string) => void;
+  onReopenRoom?: (sectorIdOrName: string, explicitRoomName?: string) => void;
+  onUpdateSector?: (sectorIdOrName: string, updates: Partial<Sector>) => void;
+  onAddNewLocation?: (newSector: Sector) => void;
+  onResetAllAudits?: () => void;
 }
 
 export const AuditView: React.FC<AuditViewProps> = ({
@@ -98,6 +104,10 @@ export const AuditView: React.FC<AuditViewProps> = ({
   onConsolidateRoom,
   onRecordQueryDuration,
   onConcludeRoom,
+  onReopenRoom,
+  onUpdateSector,
+  onAddNewLocation,
+  onResetAllAudits,
 }) => {
   // Tab: Default is 'salas' (Salas & Setores - exactly as requested: no camera / QR code blocking on open!)
   const [activeTab, setActiveTab] = useState<'salas' | 'divergencias' | 'conciliacao' | 'relatorio' | 'scanner'>('salas');
@@ -108,6 +118,8 @@ export const AuditView: React.FC<AuditViewProps> = ({
   const [showUnlocatedModal, setShowUnlocatedModal] = useState<boolean>(false);
   const [roomNewSemPlaqueta, setRoomNewSemPlaqueta] = useState<boolean>(false);
   const [roomNewForaDoAspec, setRoomNewForaDoAspec] = useState<boolean>(false);
+  const [isNewLocationModalOpen, setIsNewLocationModalOpen] = useState<boolean>(false);
+  const [roomFilterStatus, setRoomFilterStatus] = useState<'all' | 'conferidas' | 'pendentes'>('all');
 
   // Side-by-side Dual Version Comparison Modal & Room Conference Draft States
   const [showRoomComparisonModal, setShowRoomComparisonModal] = useState<boolean>(false);
@@ -134,6 +146,16 @@ export const AuditView: React.FC<AuditViewProps> = ({
     }
   });
 
+  // Officially Reviewed Rooms (Persisted in localStorage for permanent OK display)
+  const [reviewedRooms, setReviewedRooms] = useState<Record<string, { revisada: boolean; dataRevisao?: string; responsavelRevisao?: string; nome?: string; id?: string }>>(() => {
+    try {
+      const saved = localStorage.getItem('cpsms_reviewed_rooms');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
   // Cross-sector foreign tombo check states inside current room
   const [foreignTomboInput, setForeignTomboInput] = useState<string>('');
   const [foreignTomboFeedback, setForeignTomboFeedback] = useState<{
@@ -144,6 +166,9 @@ export const AuditView: React.FC<AuditViewProps> = ({
 
   // Room Responsibles Assignment Modal & Inline Editing State
   const [showRoomResponsiblesModal, setShowRoomResponsiblesModal] = useState<boolean>(false);
+  const [showEditSectorLeaderModal, setShowEditSectorLeaderModal] = useState<boolean>(false);
+  const [newSectorLeaderInput, setNewSectorLeaderInput] = useState<string>('');
+  const [newSectorCargoInput, setNewSectorCargoInput] = useState<string>('');
   const [editingAssetResponsibleId, setEditingAssetResponsibleId] = useState<string | null>(null);
   const [inlineResponsibleInput, setInlineResponsibleInput] = useState<string>('');
 
@@ -244,26 +269,67 @@ export const AuditView: React.FC<AuditViewProps> = ({
   }, [assets, selectedUnitId]);
 
   // Distinct Rooms (Subáreas no ASPEC) for the selected Unit (Área no ASPEC)
+  const allUnitSectorsList = useMemo(() => {
+    return buildUnitSubareas(selectedUnitId as any, sectors, assets).map(s => {
+      const revData = 
+        reviewedRooms[s.nome] || 
+        reviewedRooms[normalizeLoc(s.nome)] || 
+        (s.id ? reviewedRooms[s.id] : undefined) ||
+        (s.id ? reviewedRooms[normalizeLoc(s.id)] : undefined);
+
+      const isConferida = Boolean(
+        s.revisada ||
+        (s.totalCount > 0 && s.checkedCount === s.totalCount) ||
+        s.percent === 100 ||
+        consolidatedRooms[s.nome] ||
+        (revData && revData.revisada !== false)
+      );
+
+      return {
+        id: s.id,
+        nome: s.nome,
+        responsavel: s.responsavelNome,
+        responsavelCargo: s.responsavelCargo,
+        responsavelOriginalAspec: s.responsavelOriginalAspec,
+        liderAlterado: s.liderAlterado,
+        dataAlteracaoLider: s.dataAlteracaoLider,
+        revisada: isConferida,
+        dataRevisao: revData?.dataRevisao,
+        responsavelRevisao: revData?.responsavelRevisao,
+        bloco: s.bloco,
+        assetsCount: s.totalCount,
+        checkedCount: isConferida ? s.totalCount : s.checkedCount,
+        pendingCount: isConferida ? 0 : Math.max(0, s.totalCount - s.checkedCount),
+        totalVal: s.totalVal,
+        percent: isConferida ? 100 : s.percent
+      };
+    });
+  }, [sectors, assets, selectedUnitId, reviewedRooms, consolidatedRooms]);
+
+  // Contadores para o cabeçalho e filtros (Todas / Conferidas / Pendentes)
+  const roomStats = useMemo(() => {
+    const total = allUnitSectorsList.length;
+    const conferidas = allUnitSectorsList.filter(s => s.revisada).length;
+    const pendentes = total - conferidas;
+    return { total, conferidas, pendentes };
+  }, [allUnitSectorsList]);
+
+  // Lista filtrada por status e pesquisa
   const unitSectorsList = useMemo(() => {
-    const list = buildUnitSubareas(selectedUnitId as any, sectors, assets).map(s => ({
-      id: s.id,
-      nome: s.nome,
-      responsavel: s.responsavelNome,
-      revisada: s.revisada,
-      bloco: s.bloco,
-      assetsCount: s.totalCount,
-      checkedCount: s.checkedCount,
-      pendingCount: s.totalCount - s.checkedCount,
-      totalVal: s.totalVal,
-      percent: s.percent
-    }));
+    let list = allUnitSectorsList;
+
+    if (roomFilterStatus === 'conferidas') {
+      list = list.filter(s => s.revisada);
+    } else if (roomFilterStatus === 'pendentes') {
+      list = list.filter(s => !s.revisada);
+    }
 
     if (sectorSearchQuery.trim()) {
       const q = sectorSearchQuery.toLowerCase();
-      return list.filter(s => s.nome.toLowerCase().includes(q) || (s.responsavel || '').toLowerCase().includes(q));
+      list = list.filter(s => s.nome.toLowerCase().includes(q) || (s.responsavel || '').toLowerCase().includes(q));
     }
     return list;
-  }, [sectors, assets, selectedUnitId, sectorSearchQuery]);
+  }, [allUnitSectorsList, roomFilterStatus, sectorSearchQuery]);
 
   // Synchronize initialSectorName when passed from Caderno de Balanço or external links
   useEffect(() => {
@@ -390,24 +456,34 @@ export const AuditView: React.FC<AuditViewProps> = ({
 
     // 2. Marcar sala como concluída/revisada no estado principal
     if (onConcludeRoom) {
-      onConcludeRoom(activeSector.id || activeSector.nome);
+      onConcludeRoom(activeSector.id || activeSector.nome, activeSector.nome);
     }
 
-    // 3. Persistência imediata e garantida no localStorage
+    // 3. Persistência imediata e garantida no localStorage e estado local
+    const revData = {
+      revisada: true,
+      dataRevisao: new Date().toISOString(),
+      responsavelRevisao: currentProfile.nome,
+      nome: activeSector.nome,
+      id: activeSector.id
+    };
     try {
       const raw = localStorage.getItem('cpsms_reviewed_rooms');
       const reviewedMap = raw ? JSON.parse(raw) : {};
-      const revData = {
-        revisada: true,
-        dataRevisao: new Date().toISOString(),
-        responsavelRevisao: currentProfile.nome,
-        nome: activeSector.nome
-      };
       reviewedMap[activeSector.nome] = revData;
+      reviewedMap[normalizeLoc(activeSector.nome)] = revData;
       if (activeSector.id) {
         reviewedMap[activeSector.id] = revData;
+        reviewedMap[normalizeLoc(activeSector.id)] = revData;
       }
       localStorage.setItem('cpsms_reviewed_rooms', JSON.stringify(reviewedMap));
+
+      setReviewedRooms(prev => ({
+        ...prev,
+        [activeSector.nome]: revData,
+        [normalizeLoc(activeSector.nome)]: revData,
+        ...(activeSector.id ? { [activeSector.id]: revData } : {})
+      }));
 
       // Remove rascunho se houver
       const draftsRaw = localStorage.getItem('cpsms_room_drafts');
@@ -441,12 +517,37 @@ export const AuditView: React.FC<AuditViewProps> = ({
 
     // 4. Gerar e baixar imediatamente o arquivo PDF oficial com o confronto Físico vs ASPEC
     let pdfResult: { filename: string; isAllOk: boolean } | null = null;
+    let detectedLeaderChange: { originalLeader: string; newLeader: string; newCargo?: string } | undefined = undefined;
     try {
+      const rawChanges = localStorage.getItem('cpsms_room_leader_changes');
+      if (rawChanges) {
+        try {
+          const parsed = JSON.parse(rawChanges);
+          const found = parsed[activeSector.nome] || parsed[activeSector.id] || parsed[normalizeLoc(activeSector.nome)];
+          if (found && found.newLeader && found.originalLeader && found.newLeader.trim().toLowerCase() !== found.originalLeader.trim().toLowerCase()) {
+            detectedLeaderChange = {
+              originalLeader: found.originalLeader,
+              newLeader: found.newLeader,
+              newCargo: found.newCargo
+            };
+          }
+        } catch (e) {}
+      }
+
+      if (!detectedLeaderChange && activeSector.liderAlterado && activeSector.responsavelOriginalAspec) {
+        detectedLeaderChange = {
+          originalLeader: activeSector.responsavelOriginalAspec,
+          newLeader: activeSector.responsavel || (activeSector as any).responsavelNome || '',
+          newCargo: activeSector.responsavelCargo
+        };
+      }
+
       pdfResult = downloadAspecRoomPdf({
         sector: activeSector,
         unit: activeUnitInfo,
         assets,
-        currentProfile
+        currentProfile,
+        leaderChange: detectedLeaderChange
       });
     } catch (err) {
       console.error('Erro ao gerar/baixar PDF oficial da sala:', err);
@@ -454,9 +555,14 @@ export const AuditView: React.FC<AuditViewProps> = ({
 
     // 5. Feedback detalhado com status de conformidade
     if (pdfResult) {
-      const statusTitle = pdfResult.isAllOk
+      let statusTitle = pdfResult.isAllOk
         ? '✓ SALA 100% DE ACORDO COM O ASPEC'
         : '⚠️ DIVERGÊNCIAS REGISTRADAS (ENTRADAS / SAÍDAS)';
+
+      if (detectedLeaderChange || activeSector.liderAlterado) {
+        statusTitle += ' · ⚠️ LÍDER ALTERADO: TERMO NOTIFICA A CONTABILIDADE QUE NO ASPEC TEM QUE ALTERAR O LÍDER!';
+      }
+
       setBulkFeedback(
         `Sala "${activeSector.nome}" concluída com sucesso! ${statusTitle}. O arquivo PDF oficial (${pdfResult.filename}) foi baixado automaticamente com o espelho contábil!`
       );
@@ -466,6 +572,101 @@ export const AuditView: React.FC<AuditViewProps> = ({
       );
     }
     setTimeout(() => setBulkFeedback(null), 8000);
+  };
+
+  // Ação Rápida e Direta: Marcar Sala como Conferida (OK) no Inventário
+  const handleMarkRoomOk = (targetSectorObj?: any) => {
+    const sect = targetSectorObj || activeSector;
+    if (!sect) return;
+
+    // 1. Se estiver dentro da sala, confirma todos os bens pendentes
+    if (sect.id === activeSector?.id) {
+      handleConfirmAllInSector();
+    }
+
+    // 2. Marcar sala no estado principal
+    if (onConcludeRoom) {
+      onConcludeRoom(sect.id || sect.nome, sect.nome);
+    }
+
+    // 3. Persistência imediata e garantida no localStorage e estado local
+    const revData = {
+      revisada: true,
+      dataRevisao: new Date().toISOString(),
+      responsavelRevisao: currentProfile.nome,
+      nome: sect.nome,
+      id: sect.id
+    };
+
+    try {
+      const raw = localStorage.getItem('cpsms_reviewed_rooms');
+      const reviewedMap = raw ? JSON.parse(raw) : {};
+      reviewedMap[sect.nome] = revData;
+      reviewedMap[normalizeLoc(sect.nome)] = revData;
+      if (sect.id) {
+        reviewedMap[sect.id] = revData;
+        reviewedMap[normalizeLoc(sect.id)] = revData;
+      }
+      localStorage.setItem('cpsms_reviewed_rooms', JSON.stringify(reviewedMap));
+
+      setReviewedRooms(prev => ({
+        ...prev,
+        [sect.nome]: revData,
+        [normalizeLoc(sect.nome)]: revData,
+        ...(sect.id ? { [sect.id]: revData } : {})
+      }));
+
+      // Remove de rascunhos se houver
+      const draftsRaw = localStorage.getItem('cpsms_room_drafts');
+      if (draftsRaw) {
+        const drafts = JSON.parse(draftsRaw);
+        delete drafts[sect.nome];
+        localStorage.setItem('cpsms_room_drafts', JSON.stringify(drafts));
+        setRoomDrafts(drafts);
+      }
+    } catch (e) {
+      console.warn('Erro ao salvar sala conferida:', e);
+    }
+
+    setBulkFeedback(`✅ Sala "${sect.nome}" marcada como CONFERIDA (OK)! Status salvo com sucesso e permanente.`);
+    setTimeout(() => setBulkFeedback(null), 5000);
+  };
+
+  // Reabrir sala para nova conferência / Desmarcar OK
+  const handleUnmarkRoomOk = (targetSectorObj?: any) => {
+    const sect = targetSectorObj || activeSector;
+    if (!sect) return;
+
+    if (onReopenRoom) {
+      onReopenRoom(sect.id || sect.nome, sect.nome);
+    }
+
+    try {
+      const raw = localStorage.getItem('cpsms_reviewed_rooms');
+      if (raw) {
+        const reviewedMap = JSON.parse(raw);
+        delete reviewedMap[sect.nome];
+        delete reviewedMap[normalizeLoc(sect.nome)];
+        if (sect.id) {
+          delete reviewedMap[sect.id];
+          delete reviewedMap[normalizeLoc(sect.id)];
+        }
+        localStorage.setItem('cpsms_reviewed_rooms', JSON.stringify(reviewedMap));
+      }
+
+      setReviewedRooms(prev => {
+        const next = { ...prev };
+        delete next[sect.nome];
+        delete next[normalizeLoc(sect.nome)];
+        if (sect.id) delete next[sect.id];
+        return next;
+      });
+    } catch (e) {
+      console.warn('Erro ao reabrir sala:', e);
+    }
+
+    setBulkFeedback(`Sala "${sect.nome}" reaberta para conferência.`);
+    setTimeout(() => setBulkFeedback(null), 5000);
   };
 
   // Mark room as having an active physical conference draft
@@ -822,6 +1023,69 @@ export const AuditView: React.FC<AuditViewProps> = ({
     });
     setBulkFeedback(`Sucesso! Responsáveis pelos bens da sala "${activeSector?.nome}" atualizados e salvos.`);
     setTimeout(() => setBulkFeedback(null), 5000);
+  };
+
+  // Update Leader of this specific Room / Sector
+  const handleUpdateSectorLeader = (newLeaderName: string, newLeaderCargo?: string) => {
+    if (!activeSector) return;
+    const cleanLeader = newLeaderName.trim();
+    if (!cleanLeader) return;
+
+    // Identifica o líder original no ASPEC
+    const originalLeader = activeSector.responsavelOriginalAspec || activeSector.responsavel || 'Não definido no ASPEC';
+    const isActuallyChanged = originalLeader.trim().toLowerCase() !== cleanLeader.toLowerCase();
+
+    // 1. Salva em cpsms_room_leader_changes no localStorage
+    try {
+      const raw = localStorage.getItem('cpsms_room_leader_changes');
+      const map = raw ? JSON.parse(raw) : {};
+      const changeEntry = {
+        originalLeader: originalLeader,
+        newLeader: cleanLeader,
+        newCargo: newLeaderCargo || activeSector.responsavelCargo || 'Responsável Setorial',
+        changedAt: new Date().toISOString(),
+        changedBy: currentProfile.nome,
+        sectorName: activeSector.nome,
+        sectorId: activeSector.id
+      };
+      map[activeSector.nome] = changeEntry;
+      if (activeSector.id) {
+        map[activeSector.id] = changeEntry;
+      }
+      map[normalizeLoc(activeSector.nome)] = changeEntry;
+      localStorage.setItem('cpsms_room_leader_changes', JSON.stringify(map));
+    } catch (e) {
+      console.warn('Erro ao salvar cpsms_room_leader_changes:', e);
+    }
+
+    // 2. Chama onUpdateSector para atualizar o estado principal
+    if (onUpdateSector) {
+      onUpdateSector(activeSector.id || activeSector.nome, {
+        responsavelNome: cleanLeader,
+        responsavelCargo: newLeaderCargo || activeSector.responsavelCargo || 'Responsável Setorial',
+        responsavelOriginalAspec: originalLeader,
+        liderAlterado: isActuallyChanged,
+        dataAlteracaoLider: new Date().toISOString()
+      });
+    }
+
+    // 3. Atualiza os bens da sala para o novo líder
+    const updates = activeSectorAssets.map(a => ({
+      assetId: a.id,
+      responsavelNome: (!a.responsavelNome || a.responsavelNome === originalLeader || a.responsavelNome === 'Não atribuído' || a.responsavelNome === 'Responsável Setorial')
+        ? cleanLeader
+        : a.responsavelNome,
+      responsavelCargo: newLeaderCargo || a.responsavelCargo
+    }));
+    handleSaveRoomResponsibles(updates);
+
+    setShowEditSectorLeaderModal(false);
+    setBulkFeedback(
+      isActuallyChanged
+        ? `Líder da sala "${activeSector.nome}" alterado para "${cleanLeader}". ATENÇÃO: Ao Concluir a Sala, o Termo oficial notificará que NO ASPEC TEM QUE ALTERAR O LÍDER!`
+        : `Líder da sala mantido como "${cleanLeader}".`
+    );
+    setTimeout(() => setBulkFeedback(null), 8000);
   };
 
   const handleSaveInlineResponsible = (asset: Asset) => {
@@ -1514,60 +1778,155 @@ export const AuditView: React.FC<AuditViewProps> = ({
           {!selectedSectorId ? (
             /* SECTORS GRID FOR THE SELECTED UNIT */
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5 space-y-4 shadow-xs">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
                 <div>
-                  <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <span>Salas e Setores de {activeUnitInfo.sigla}</span>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono font-bold">
-                      {unitSectorsList.length} salas cadastradas
-                    </span>
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Clique em qualquer sala para abrir a lista completa dos bens pertencentes àquele local.
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      <span>Salas e Setores de {activeUnitInfo.sigla}</span>
+                    </h3>
+                    <div className="flex items-center gap-1.5 text-xs font-mono font-bold">
+                      <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                        {roomStats.total} total
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300">
+                        ✓ {roomStats.conferidas} OK
+                      </span>
+                      {roomStats.pendentes > 0 && (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border border-amber-300">
+                          ⏳ {roomStats.pendentes} pendentes
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    Marque um <strong>OK</strong> quando conferir a sala para não fazer retrabalho. O status é salvo permanentemente.
                   </p>
                 </div>
 
-                {/* Quick Sector Search Input */}
-                <div className="relative w-full sm:w-64">
-                  <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
-                  <input
-                    type="text"
-                    value={sectorSearchQuery}
-                    onChange={(e) => setSectorSearchQuery(e.target.value)}
-                    placeholder="Filtrar sala / consultório..."
-                    className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
-                  />
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+                  {/* Status Filters: Todas / Conferidas / Pendentes */}
+                  <div className="flex items-center bg-slate-100 dark:bg-slate-850 p-1 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setRoomFilterStatus('all')}
+                      className={`px-3 py-1.5 font-bold rounded-lg transition-all cursor-pointer ${
+                        roomFilterStatus === 'all'
+                          ? 'bg-white dark:bg-slate-750 text-slate-900 dark:text-white shadow-xs'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                      }`}
+                    >
+                      Todas ({roomStats.total})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRoomFilterStatus('conferidas')}
+                      className={`px-3 py-1.5 font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                        roomFilterStatus === 'conferidas'
+                          ? 'bg-emerald-500 text-slate-950 shadow-xs'
+                          : 'text-emerald-700 dark:text-emerald-400 hover:text-emerald-900'
+                      }`}
+                    >
+                      <CheckCheck className="w-3.5 h-3.5 stroke-[3]" />
+                      <span>Conferidas ({roomStats.conferidas})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRoomFilterStatus('pendentes')}
+                      className={`px-3 py-1.5 font-bold rounded-lg transition-all cursor-pointer ${
+                        roomFilterStatus === 'pendentes'
+                          ? 'bg-amber-500 text-slate-950 shadow-xs'
+                          : 'text-amber-700 dark:text-amber-400 hover:text-amber-900'
+                      }`}
+                    >
+                      Pendentes ({roomStats.pendentes})
+                    </button>
+                  </div>
+
+                  {/* Add New Room / Physical Area Button */}
+                  {onAddNewLocation && (
+                    <button
+                      type="button"
+                      onClick={() => setIsNewLocationModalOpen(true)}
+                      className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-xs transition-all cursor-pointer shrink-0"
+                      title="Cadastrar uma nova sala física ou área (como Jardim, Pátio, DML, etc.)"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ Nova Sala</span>
+                    </button>
+                  )}
+
+                  {/* Reset All Audits to Clean Slate Button */}
+                  {onResetAllAudits && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm('Atenção: Deseja reiniciar todas as conferências para começar do zero? Todas as salas e bens voltarão ao status Pendente.')) {
+                          onResetAllAudits();
+                        }
+                      }}
+                      className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 border border-slate-300 dark:border-slate-700 rounded-xl shadow-2xs hover:border-rose-300 transition-all cursor-pointer shrink-0"
+                      title="Reiniciar todas as conferências para começar do zero (tudo pendente)"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Começar do Zero</span>
+                    </button>
+                  )}
+
+                  {/* Quick Sector Search Input */}
+                  <div className="relative w-full sm:w-56">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
+                    <input
+                      type="text"
+                      value={sectorSearchQuery}
+                      onChange={(e) => setSectorSearchQuery(e.target.value)}
+                      placeholder="Filtrar sala..."
+                      className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                    />
+                  </div>
                 </div>
               </div>
 
               {/* Sectors Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {unitSectorsList.map((sector, index) => {
-                  const isConferida = Boolean(sector.revisada || sector.percent === 100 || consolidatedRooms[sector.nome]);
+                  const isConferida = Boolean(sector.revisada);
                   return (
-                    <button
+                    <div
                       key={`sector-${sector.id}-${index}`}
-                      type="button"
+                      role="button"
+                      tabIndex={0}
                       onClick={() => setSelectedSectorId(sector.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          setSelectedSectorId(sector.id);
+                        }
+                      }}
                       className={`p-4 rounded-xl border text-left transition-all cursor-pointer group flex flex-col justify-between space-y-3 ${
                         isConferida
-                          ? 'border-emerald-300 dark:border-emerald-700/60 bg-emerald-50/50 dark:bg-emerald-950/20 hover:border-emerald-500'
+                          ? 'border-2 border-emerald-500 bg-emerald-50/70 dark:bg-emerald-950/30 hover:border-emerald-600 shadow-sm'
                           : 'border-slate-200 dark:border-slate-800 hover:border-emerald-500/80 bg-slate-50/60 dark:bg-slate-850 hover:bg-emerald-50/20 dark:hover:bg-emerald-950/20'
                       }`}
                     >
                       <div>
                         <div className="flex items-start justify-between gap-2">
-                          <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white group-hover:text-emerald-700 dark:group-hover:text-emerald-300 leading-snug">
-                            {sector.nome}
-                          </span>
+                          <div>
+                            <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white group-hover:text-emerald-700 dark:group-hover:text-emerald-300 leading-snug">
+                              {sector.nome}
+                            </span>
+                            {isConferida && sector.dataRevisao && (
+                              <div className="text-[10px] text-emerald-700 dark:text-emerald-300 font-mono mt-0.5 font-semibold flex items-center gap-1">
+                                <span>✓ Conferida em {new Date(sector.dataRevisao).toLocaleDateString('pt-BR')}</span>
+                              </div>
+                            )}
+                          </div>
                           <div className="flex items-center gap-1.5 shrink-0">
                             {isConferida ? (
                               <span 
-                                className="text-[10px] uppercase font-black px-2 py-0.5 rounded-full bg-emerald-500 text-slate-950 font-mono shadow-xs flex items-center gap-1"
-                                title="Sala concluída, auditada e conferida no inventário físico"
+                                className="text-[10px] uppercase font-black px-2.5 py-1 rounded-full bg-emerald-500 text-slate-950 font-mono shadow-xs flex items-center gap-1 ring-1 ring-emerald-600"
+                                title="Sala concluída, auditada e conferida no inventário físico com OK garantido"
                               >
-                                <CheckCheck className="w-3 h-3 stroke-[3]" />
-                                <span>Conferida</span>
+                                <CheckCheck className="w-3.5 h-3.5 stroke-[3]" />
+                                <span>CONFERIDA (OK)</span>
                               </span>
                             ) : roomDrafts[sector.nome] ? (
                               <span 
@@ -1576,7 +1935,13 @@ export const AuditView: React.FC<AuditViewProps> = ({
                               >
                                 Rascunho
                               </span>
-                            ) : null}
+                            ) : (
+                              <span 
+                                className="text-[9px] uppercase font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-mono border border-slate-200 dark:border-slate-700"
+                              >
+                                Pendente
+                              </span>
+                            )}
                             {consolidatedRooms[sector.nome] && !isConferida && (
                               <span 
                                 className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-mono border border-emerald-300"
@@ -1590,30 +1955,19 @@ export const AuditView: React.FC<AuditViewProps> = ({
                         </div>
 
                         {sector.responsavel && (
-                          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1">
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
                             <User className="w-3 h-3 text-slate-400 shrink-0" />
                             <span className="truncate">{sector.responsavel}</span>
+                            {sector.liderAlterado && (
+                              <span className="text-[9px] uppercase font-bold px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-800 dark:text-amber-300 border border-amber-400/50 font-mono">
+                                ⚠️ Líder alterado in loco
+                              </span>
+                            )}
                           </div>
                         )}
                       </div>
 
-                      <div className="space-y-1.5 pt-2 border-t border-slate-200/60 dark:border-slate-800">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                            {sector.assetsCount} {sector.assetsCount === 1 ? 'bem' : 'bens'}
-                          </span>
-                          <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded font-mono ${
-                            isConferida 
-                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-black' 
-                              : sector.checkedCount > 0 
-                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                              : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-400'
-                          }`}>
-                            {isConferida ? '✓ ' : ''}
-                            {isConferida ? sector.assetsCount : sector.checkedCount} de {sector.assetsCount} conferidos ({isConferida ? 100 : sector.percent}%)
-                          </span>
-                        </div>
-
+                      <div className="space-y-2 pt-2 border-t border-slate-200/60 dark:border-slate-800">
                         {/* Progress bar per sector */}
                         <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
                           <div 
@@ -1621,8 +1975,59 @@ export const AuditView: React.FC<AuditViewProps> = ({
                             style={{ width: `${isConferida ? 100 : sector.percent}%` }}
                           />
                         </div>
+
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                              {sector.assetsCount} {sector.assetsCount === 1 ? 'bem' : 'bens'}
+                            </span>
+                            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded font-mono ${
+                              isConferida 
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-black' 
+                                : sector.checkedCount > 0 
+                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' 
+                                : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-400'
+                            }`}>
+                              {isConferida ? '✓ ' : ''}
+                              {isConferida ? sector.assetsCount : sector.checkedCount} de {sector.assetsCount} ({isConferida ? 100 : sector.percent}%)
+                            </span>
+                          </div>
+
+                          {/* Direct Actions on the Room Card */}
+                          <div className="flex items-center gap-2">
+                            {isConferida ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleUnmarkRoomOk(sector);
+                                }}
+                                className="px-2 py-0.5 text-[11px] font-bold text-slate-600 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 underline transition-all cursor-pointer"
+                                title="Desmarcar OK da sala"
+                              >
+                                Desmarcar OK
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleMarkRoomOk(sector);
+                                }}
+                                className="px-2.5 py-1 text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-lg shadow-xs transition-all cursor-pointer flex items-center gap-1 hover:scale-105 active:scale-95"
+                                title="Marcar sala como conferida (OK) imediatamente"
+                              >
+                                <CheckCheck className="w-3.5 h-3.5 stroke-[3]" />
+                                <span>Marcar OK</span>
+                              </button>
+                            )}
+                            <span className="text-xs font-bold text-emerald-600 group-hover:translate-x-0.5 transition-transform flex items-center">
+                              Entrar →
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -1658,22 +2063,52 @@ export const AuditView: React.FC<AuditViewProps> = ({
                     </h3>
 
                     {activeSector?.revisada ? (
-                      <span className="px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-500 text-slate-950 flex items-center gap-1.5 shadow-sm">
-                        <CheckCheck className="w-3.5 h-3.5 stroke-[3]" />
-                        <span>Revisada no Mapa</span>
+                      <span className="px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider bg-emerald-500 text-slate-950 flex items-center gap-1.5 shadow-sm ring-2 ring-emerald-600/40">
+                        <CheckCheck className="w-4 h-4 stroke-[3]" />
+                        <span>SALA CONFERIDA (OK)</span>
                       </span>
                     ) : (
-                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 border border-amber-300 flex items-center gap-1.5">
+                      <span className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 border border-amber-300 flex items-center gap-1.5">
                         <Clock className="w-3.5 h-3.5" />
-                        <span>Em Vistoria Física</span>
+                        <span>Pendente de Conferência</span>
                       </span>
                     )}
                   </div>
 
                   <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-3 flex-wrap pt-0.5">
                     <span>Unidade: <strong className="text-slate-700 dark:text-slate-200">{activeUnitInfo.nome}</strong></span>
-                    {activeSector?.responsavel && (
-                      <span>· Responsável: <strong className="text-slate-700 dark:text-slate-200">{activeSector.responsavel}</strong></span>
+                    {activeSector?.responsavel ? (
+                      <span className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800/80 px-2.5 py-1 rounded-lg">
+                        <span>· Responsável: <strong className="text-slate-800 dark:text-slate-100">{activeSector.responsavel}</strong></span>
+                        {activeSector.liderAlterado && (
+                          <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-400 text-amber-950 font-mono shadow-xs">
+                            ⚠️ Alterar no ASPEC
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewSectorLeaderInput(activeSector.responsavel || '');
+                            setNewSectorCargoInput(activeSector.responsavelCargo || 'Responsável Setorial');
+                            setShowEditSectorLeaderModal(true);
+                          }}
+                          className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer ml-1"
+                        >
+                          ✏️ Alterar
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewSectorLeaderInput('');
+                          setNewSectorCargoInput('Responsável Setorial');
+                          setShowEditSectorLeaderModal(true);
+                        }}
+                        className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                      >
+                        + Definir Líder da Sala
+                      </button>
                     )}
                     <span>· Valor alocado no ASPEC: <strong className="text-slate-700 dark:text-slate-200 font-mono">{formatBRL(activeSector?.totalVal || 0)}</strong></span>
                   </div>
@@ -1681,34 +2116,44 @@ export const AuditView: React.FC<AuditViewProps> = ({
 
                 {/* Top Action Buttons for this Room */}
                 <div className="flex items-center gap-2.5 flex-wrap">
-                  {/* FUNÇÃO OBRIGATÓRIA: CONCLUIR SALA COM DOWNLOAD AUTOMÁTICO DE PDF */}
+                  {/* BOTÃO PRINCIPAL: MARCAR SALA COMO CONFERIDA (OK) */}
                   {!activeSector?.revisada ? (
                     <button
                       type="button"
-                      onClick={handleConcludeRoomWithPdf}
+                      onClick={() => handleMarkRoomOk(activeSector)}
                       className="flex items-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-black bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl transition-all cursor-pointer shadow-md ring-2 ring-emerald-500/40 hover:scale-[1.02] active:scale-[0.98]"
-                      title="Concluir sala atual: consolidar conferência, atualizar mapa e baixar automaticamente o arquivo PDF oficial com confronto Físico vs ASPEC"
+                      title="Marcar sala como conferida (OK) no inventário e salvar permanentemente para não fazer retrabalho"
                     >
                       <CheckCheck className="w-4 h-4 stroke-[3]" />
-                      <span>Concluir Sala (Baixa PDF)</span>
+                      <span>Marcar Sala como OK</span>
                     </button>
                   ) : (
-                    <div className="flex items-center gap-1.5">
-                      <div className="flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-black bg-emerald-100 dark:bg-emerald-950/80 text-emerald-900 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700 rounded-xl">
-                        <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                        <span>Sala Revisada</span>
+                    <div className="flex items-center gap-1.5 bg-emerald-100 dark:bg-emerald-950/80 p-1.5 rounded-xl border-2 border-emerald-500 shadow-xs">
+                      <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-black text-emerald-950 dark:text-emerald-200">
+                        <CheckCheck className="w-4 h-4 text-emerald-600 stroke-[3]" />
+                        <span>CONFERIDA (OK)</span>
                       </div>
                       <button
                         type="button"
-                        onClick={handleConcludeRoomWithPdf}
-                        className="flex items-center gap-1.5 px-3 py-2.5 text-xs sm:text-sm font-bold bg-slate-800 hover:bg-slate-700 text-white rounded-xl transition-all cursor-pointer shadow-xs border border-slate-700"
-                        title="Baixar novamente o PDF oficial com o espelho contábil da sala (Físico vs ASPEC)"
+                        onClick={() => handleUnmarkRoomOk(activeSector)}
+                        className="px-2 py-1 text-[11px] font-bold text-slate-600 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 underline cursor-pointer"
+                        title="Reabrir sala para conferência caso queira alterar algo"
                       >
-                        <Download className="w-4 h-4 text-emerald-400" />
-                        <span>Baixar PDF</span>
+                        Desmarcar OK
                       </button>
                     </div>
                   )}
+
+                  {/* Baixar PDF Oficial */}
+                  <button
+                    type="button"
+                    onClick={handleConcludeRoomWithPdf}
+                    className="flex items-center gap-1.5 px-4 py-2.5 text-xs sm:text-sm font-bold bg-slate-900 hover:bg-slate-800 text-white rounded-xl transition-all cursor-pointer shadow-xs border border-slate-700"
+                    title="Baixar o arquivo PDF oficial com confronto Físico vs ASPEC"
+                  >
+                    <Download className="w-4 h-4 text-emerald-400" />
+                    <span>Baixar PDF Oficial</span>
+                  </button>
 
                   {/* Confirm All In Room */}
                   <button
@@ -1741,6 +2186,25 @@ export const AuditView: React.FC<AuditViewProps> = ({
                   >
                     <FileText className="w-4 h-4 text-white" />
                     <span>Relatório para o ASPEC</span>
+                  </button>
+
+                  {/* ALTERAR LÍDER DA SALA */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewSectorLeaderInput(activeSector?.responsavel || '');
+                      setNewSectorCargoInput(activeSector?.responsavelCargo || 'Responsável Setorial');
+                      setShowEditSectorLeaderModal(true);
+                    }}
+                    className={`flex items-center gap-1.5 px-4 py-2.5 text-xs sm:text-sm font-bold rounded-xl transition-all cursor-pointer shadow-xs ${
+                      activeSector?.liderAlterado
+                        ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 ring-2 ring-amber-400/50 font-black'
+                        : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+                    }`}
+                    title="Alterar o líder/responsável desta sala específica e registrar no termo que no ASPEC tem que alterar o líder"
+                  >
+                    <UserCheck className="w-4 h-4 text-emerald-400" />
+                    <span>{activeSector?.liderAlterado ? 'Líder Alterado (Mudar no ASPEC)' : 'Alterar Líder da Sala'}</span>
                   </button>
 
                   {/* DEFINIR RESPONSÁVEIS DOS BENS DA SALA */}
@@ -1834,6 +2298,37 @@ export const AuditView: React.FC<AuditViewProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* Aviso Prominente de Alteração de Líder */}
+              {activeSector?.liderAlterado && (
+                <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-400 text-amber-950 dark:text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl shrink-0">⚠️</span>
+                    <div>
+                      <h5 className="text-xs sm:text-sm font-black uppercase tracking-wide text-amber-900 dark:text-amber-300">
+                        Líder Desta Sala Alterado In Loco — Notificação Obrigatória para o ASPEC
+                      </h5>
+                      <p className="text-xs mt-0.5 text-slate-700 dark:text-slate-300">
+                        Líder anterior no ASPEC: <strong className="line-through text-slate-500">{activeSector.responsavelOriginalAspec || 'Original'}</strong> ➔ Novo Líder conferido in loco: <strong className="text-emerald-700 dark:text-emerald-400 font-bold">{activeSector.responsavel}</strong> ({activeSector.responsavelCargo || 'Responsável Setorial'}).
+                      </p>
+                      <p className="text-[11px] font-bold text-red-700 dark:text-red-400 mt-1">
+                        O Termo Oficial gerado ao clicar em "Concluir Sala" e "Relatório para o ASPEC" notificará a Contabilidade com a determinação: <u>NO ASPEC TEM QUE ALTERAR O LÍDER</u> desta sala.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewSectorLeaderInput(activeSector.responsavel || '');
+                      setNewSectorCargoInput(activeSector.responsavelCargo || 'Responsável Setorial');
+                      setShowEditSectorLeaderModal(true);
+                    }}
+                    className="px-3.5 py-2 text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl transition-colors cursor-pointer shrink-0 shadow-xs"
+                  >
+                    Modificar Líder
+                  </button>
+                </div>
+              )}
 
               {/* ROOM PROGRESS & STATS BANNER */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -2683,14 +3178,31 @@ export const AuditView: React.FC<AuditViewProps> = ({
                     </div>
 
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
+                      {!activeSector?.revisada ? (
+                        <button
+                          type="button"
+                          onClick={() => handleMarkRoomOk(activeSector)}
+                          className="flex items-center justify-center gap-2 px-6 py-3.5 text-sm font-black bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-2xl transition-all cursor-pointer shadow-lg hover:scale-[1.02] active:scale-[0.98] ring-2 ring-emerald-400/40"
+                          title="Marcar sala como conferida (OK) e salvar no inventário para não fazer retrabalho"
+                        >
+                          <CheckCheck className="w-5 h-5 stroke-[2.5]" />
+                          <span>Marcar Sala como OK</span>
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-2 px-4 py-3 bg-emerald-500/20 rounded-2xl border border-emerald-500/50 text-emerald-300 font-black text-xs">
+                          <CheckCheck className="w-4 h-4 stroke-[3] text-emerald-400" />
+                          <span>✅ Sala Conferida (OK)</span>
+                        </div>
+                      )}
+
                       <button
                         type="button"
                         onClick={handleConcludeRoomWithPdf}
-                        className="flex items-center justify-center gap-2 px-6 py-3.5 text-sm font-black bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-2xl transition-all cursor-pointer shadow-lg hover:scale-[1.02] active:scale-[0.98] ring-2 ring-emerald-400/40"
-                        title="Concluir sala e baixar o arquivo PDF oficial automaticamente"
+                        className="flex items-center justify-center gap-2 px-5 py-3.5 text-xs sm:text-sm font-bold bg-slate-800 hover:bg-slate-700 text-white rounded-2xl border border-slate-700 transition-all cursor-pointer shadow-md"
+                        title="Baixar o arquivo PDF oficial com confronto Físico vs ASPEC"
                       >
-                        <CheckCheck className="w-5 h-5 stroke-[2.5]" />
-                        <span>{activeSector?.revisada ? 'Re-emitir & Baixar PDF' : 'Concluir Sala & Baixar PDF'}</span>
+                        <Download className="w-4 h-4 text-emerald-400" />
+                        <span>Baixar PDF Oficial</span>
                       </button>
 
                       <button
@@ -3473,6 +3985,122 @@ export const AuditView: React.FC<AuditViewProps> = ({
           assets={activeSectorAssets}
           currentProfile={currentProfile}
           onSaveResponsibles={handleSaveRoomResponsibles}
+          onUpdateSectorLeader={handleUpdateSectorLeader}
+        />
+      )}
+
+      {/* Modal Rápido: Alterar Líder da Sala */}
+      {showEditSectorLeaderModal && activeSector && (
+        <div className="fixed inset-0 z-90 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-3xl border-2 border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-500 border border-amber-500/30">
+                  <UserCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white">
+                    Alterar Líder da Sala
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {activeSector.nome} · {activeUnitInfo.sigla}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEditSectorLeaderModal(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-xs text-amber-950 dark:text-amber-200 space-y-1">
+              <div className="font-bold flex items-center gap-1.5 text-amber-900 dark:text-amber-300">
+                <span>⚠️ Notificação no Termo de Conclusão:</span>
+              </div>
+              <p className="text-[11px] leading-relaxed">
+                Ao alterar o líder nesta sala, no documento/termo gerado ao <strong>Concluir a Sala</strong> constará expressamente em destaque que <strong>NO ASPEC TEM QUE ALTERAR O LÍDER</strong> de "<u>{activeSector.responsavelOriginalAspec || activeSector.responsavel}</u>" para o novo líder indicado.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  Líder Atual Cadastrado no ASPEC:
+                </label>
+                <input
+                  type="text"
+                  disabled
+                  value={activeSector.responsavelOriginalAspec || activeSector.responsavel || 'Não cadastrado'}
+                  className="w-full px-3.5 py-2 text-xs rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-500 cursor-not-allowed font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  Novo Líder da Sala (Vistoria Física in loco): *
+                </label>
+                <input
+                  type="text"
+                  value={newSectorLeaderInput}
+                  onChange={(e) => setNewSectorLeaderInput(e.target.value)}
+                  placeholder="Nome completo do novo responsável ou líder"
+                  className="w-full px-3.5 py-2 text-xs rounded-xl bg-white dark:bg-slate-800 border border-amber-400 dark:border-amber-500 text-slate-900 dark:text-white font-bold ring-2 ring-amber-400/20"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  Cargo / Função do Novo Líder:
+                </label>
+                <input
+                  type="text"
+                  value={newSectorCargoInput}
+                  onChange={(e) => setNewSectorCargoInput(e.target.value)}
+                  placeholder="Ex: Coordenador Clínico, Chefe de Setor, Diretor Geral..."
+                  className="w-full px-3.5 py-2 text-xs rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-medium"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowEditSectorLeaderModal(false)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => handleUpdateSectorLeader(newSectorLeaderInput, newSectorCargoInput)}
+                disabled={!newSectorLeaderInput.trim()}
+                className="px-5 py-2.5 text-xs font-black bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2"
+              >
+                <Check className="w-4 h-4 stroke-[3]" />
+                <span>Salvar e Notificar no Termo</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Cadastro de Nova Localização Física */}
+      {isNewLocationModalOpen && onAddNewLocation && (
+        <NewLocationModal
+          isOpen={isNewLocationModalOpen}
+          onClose={() => setIsNewLocationModalOpen(false)}
+          units={units}
+          onSaveLocation={(newSec) => {
+            onAddNewLocation(newSec);
+            setBulkFeedback(`Nova localização física "${newSec.nome}" (${newSec.sigla}) adicionada com sucesso!`);
+            setTimeout(() => setBulkFeedback(null), 6000);
+          }}
+          currentProfile={currentProfile}
+          defaultUnitId={selectedUnitId}
         />
       )}
 

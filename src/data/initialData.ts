@@ -33,7 +33,7 @@ export const CPSMS_SECTORS: Sector[] = [
     id: 'ceo-clinicas',
     unidadeId: 'ceo',
     unidadeNome: 'CEO – Centro de Especialidades Odontológicas',
-    nome: 'Clínicas Odontológicas Especializadas',
+    nome: 'Clínica Odontológica',
     sigla: 'CEO-CLIN',
     responsavelNome: 'Dr. Ricardo Vasconcelos',
     responsavelCargo: 'Coordenador Clínico Odontológico',
@@ -269,6 +269,22 @@ export const CPSMS_SECTORS: Sector[] = [
       { id: 'sub-poli-dir-3', nome: 'Sala da Central de Agendamento Regional' }
     ]
   },
+  {
+    id: 'poli-jardim',
+    unidadeId: 'policlinica',
+    unidadeNome: 'Policlínica Bernardo Félix da Silva',
+    nome: 'Jardim',
+    sigla: 'POLI-JARD',
+    responsavelNome: 'Dr. Alberto Farias',
+    responsavelCargo: 'Diretor Geral da Policlínica',
+    responsavelMatricula: 'CPSMS-2001',
+    bloco: 'Área Externa & Pátios',
+    andar: 'Térreo',
+    subsetores: [
+      { id: 'sub-poli-jard-1', nome: 'Jardim' },
+      { id: 'sub-poli-jard-2', nome: 'Pátio Externo e Estacionamento' }
+    ]
+  },
 
   // --- SEDE ADMINISTRATIVA DO CPSMS ---
   {
@@ -336,7 +352,7 @@ export const AVAILABLE_PROFILES: UserProfile[] = [
     unidadeId: 'ceo',
     unidadeNome: 'CEO – Centro de Especialidades Odontológicas',
     setorId: 'ceo-clinicas',
-    setorNome: 'Clínicas Odontológicas Especializadas',
+    setorNome: 'Clínica Odontológica',
     matricula: 'CPSMS-1044'
   },
   {
@@ -400,19 +416,7 @@ export const INITIAL_ASSETS: Asset[] = [
     statusRegularizacaoAspec: 'provisorio',
     observacoes: 'Bem físico localizado na Radiologia. Registrado no ASPEC na Clínica.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-20 09:30',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'setor_divergente',
-      statusRegularizacaoAspec: 'provisorio',
-      unidadeEncontrada: 'Policlínica Bernardo Félix da Silva',
-      setorEncontrado: 'Setor de Diagnóstico por Imagem e Métodos Gráficos',
-      subsetorEncontrado: 'Sala de Raio-X Digital',
-      setorOriginalAspec: 'Bloco de Consultórios Médicos Especializados',
-      unidadeOriginalAspec: 'Policlínica Bernardo Félix da Silva',
-      divergenciaConfirmada: true,
-      gestoraConfirmouAspec: false,
-      observacaoAuditoria: '[LOCALIZAÇÃO PROVISÓRIA NO CADERNO DE BALANÇO] Bem localizado fisicamente na Radiologia, porém registrado no sistema ASPEC na Clínica.'
+      conferido: false
     }
   },
   {
@@ -446,12 +450,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'SCH-CARD-2010',
     observacoes: 'Equipamento em pleno funcionamento no consultório de cardiologia.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-25 10:15',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Bloco de Consultórios Médicos Especializados',
-      unidadeEncontrada: 'Policlínica Bernardo Félix da Silva'
+      conferido: false
     }
   },
   {
@@ -488,12 +487,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'REI-OFT-410882',
     observacoes: 'Bem cedido pelo Estado. Tombamento estadual 410882.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-25 10:30',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Bloco de Consultórios Médicos Especializados',
-      unidadeEncontrada: 'Policlínica Bernardo Félix da Silva'
+      conferido: false
     }
   },
 
@@ -532,12 +526,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'GE-LOGIQ-P9-520140',
     observacoes: 'Equipamento de ponta em operação contínua.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-24 14:00',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Setor de Diagnóstico por Imagem e Métodos Gráficos',
-      unidadeEncontrada: 'Policlínica Bernardo Félix da Silva'
+      conferido: false
     }
   },
   {
@@ -571,12 +560,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'SHIM-RX-3025',
     observacoes: 'Equipamento revisado com laudo de radioproteção vigente.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-24 14:30',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Setor de Diagnóstico por Imagem e Métodos Gráficos',
-      unidadeEncontrada: 'Policlínica Bernardo Félix da Silva'
+      conferido: false
     }
   },
 
@@ -615,12 +599,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'OLY-EX3-530210',
     observacoes: 'Torre de vídeo completa em sala cirúrgica ambulatorial.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-24 16:00',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Setor de Endoscopia e Digestivo',
-      unidadeEncontrada: 'Policlínica Bernardo Félix da Silva'
+      conferido: false
     }
   },
 
@@ -656,12 +635,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'TURB-INOX-5010',
     observacoes: 'Instalado com dreno no setor de hidroterapia.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-26 08:45',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Centro de Reabilitação e Fisioterapia',
-      unidadeEncontrada: 'Policlínica Bernardo Félix da Silva'
+      conferido: false
     }
   },
   {
@@ -695,12 +669,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'MOV-RT250-5020',
     observacoes: 'Uso exclusivo para reabilitação cardiopulmonar e motora.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-26 09:00',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Centro de Reabilitação e Fisioterapia',
-      unidadeEncontrada: 'Policlínica Bernardo Félix da Silva'
+      conferido: false
     }
   },
 
@@ -736,12 +705,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'SIS-FOCO-6010',
     observacoes: 'Instalado no teto da sala cirúrgica 01.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-26 11:00',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Bloco de Pequenas Cirurgias Ambulatoriais',
-      unidadeEncontrada: 'Policlínica Bernardo Félix da Silva'
+      conferido: false
     }
   },
 
@@ -780,12 +744,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'BAUM-AUTO-540301',
     observacoes: 'Calibração e validação biológica semestral em dia.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-26 11:30',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Central de Material e Esterilização – CME Policlínica',
-      unidadeEncontrada: 'Policlínica Bernardo Félix da Silva'
+      conferido: false
     }
   },
 
@@ -821,12 +780,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'IND-450L-8010',
     observacoes: 'Possui datalogger de temperatura 24h com alarme sonoro.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-27 09:15',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Farmácia e Almoxarifado Central da Policlínica',
-      unidadeEncontrada: 'Policlínica Bernardo Félix da Silva'
+      conferido: false
     }
   },
 
@@ -862,12 +816,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'MOB-MESA-9010',
     observacoes: 'Gabinete da diretoria geral da Policlínica.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-27 10:30',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Diretoria Geral e Administrativa da Policlínica',
-      unidadeEncontrada: 'Policlínica Bernardo Félix da Silva'
+      conferido: false
     }
   },
 
@@ -886,12 +835,12 @@ export const INITIAL_ASSETS: Asset[] = [
     descricao: 'Consultório Odontológico Completo Kavo Amadeus com Cadeira Ergonômica, Equipo e Refletor LED',
     unidadeId: 'ceo',
     unidadeNome: 'CEO – Centro de Especialidades Odontológicas',
-    area: 'Clínicas Odontológicas Especializadas',
+    area: 'Clínica Odontológica',
     subarea: 'Consultório 01 – Endodontia Especializada',
     setorId: 'ceo-clinicas',
-    setorNome: 'Clínicas Odontológicas Especializadas',
+    setorNome: 'Clínica Odontológica',
     subsetorNome: 'Consultório 01 – Endodontia Especializada',
-    setorOriginalAspec: 'Clínicas Odontológicas Especializadas',
+    setorOriginalAspec: 'Clínica Odontológica',
     unidadeOriginalAspec: 'CEO – Centro de Especialidades Odontológicas',
     responsavelNome: 'Dr. Ricardo Vasconcelos',
     responsavelCargo: 'Coordenador Clínico Odontológico',
@@ -907,12 +856,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'KAV-AMAD-1101',
     observacoes: 'Cadeira odontológica completa em uso na endodontia.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-25 08:30',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Clínicas Odontológicas Especializadas',
-      unidadeEncontrada: 'CEO – Centro de Especialidades Odontológicas'
+      conferido: false
     }
   },
   {
@@ -925,12 +869,12 @@ export const INITIAL_ASSETS: Asset[] = [
     descricao: 'Motor Endodôntico Rotatório e Reciprocante X-Smart Plus Dentsply Sirona',
     unidadeId: 'ceo',
     unidadeNome: 'CEO – Centro de Especialidades Odontológicas',
-    area: 'Clínicas Odontológicas Especializadas',
+    area: 'Clínica Odontológica',
     subarea: 'Consultório 01 – Endodontia Especializada',
     setorId: 'ceo-clinicas',
-    setorNome: 'Clínicas Odontológicas Especializadas',
+    setorNome: 'Clínica Odontológica',
     subsetorNome: 'Consultório 01 – Endodontia Especializada',
-    setorOriginalAspec: 'Clínicas Odontológicas Especializadas',
+    setorOriginalAspec: 'Clínica Odontológica',
     unidadeOriginalAspec: 'CEO – Centro de Especialidades Odontológicas',
     responsavelNome: 'Dr. Ricardo Vasconcelos',
     responsavelCargo: 'Coordenador Clínico Odontológico',
@@ -946,12 +890,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'DENT-XSM-1103',
     observacoes: 'Aparelho portátil para tratamento de canal.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-25 08:45',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Clínicas Odontológicas Especializadas',
-      unidadeEncontrada: 'CEO – Centro de Especialidades Odontológicas'
+      conferido: false
     }
   },
 
@@ -987,12 +926,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'CRIS-VIT-1201',
     observacoes: 'Autoclave em rotina diária de esterilização do instrumental odontológico.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-25 09:30',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Central de Material e Esterilização – CME Odonto',
-      unidadeEncontrada: 'CEO – Centro de Especialidades Odontológicas'
+      conferido: false
     }
   },
 
@@ -1031,12 +965,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'DABI-PAN-1301',
     observacoes: 'Panorâmico digital em sala baritada no CEO.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-25 10:00',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Radiologia e Diagnóstico Odontológico',
-      unidadeEncontrada: 'CEO – Centro de Especialidades Odontológicas'
+      conferido: false
     }
   },
 
@@ -1072,12 +1001,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'LONG-CEO-1401',
     observacoes: 'Mobiliário em uso contínuo na sala de espera.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-25 11:15',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Recepção, Triagem e SAME do CEO',
-      unidadeEncontrada: 'CEO – Centro de Especialidades Odontológicas'
+      conferido: false
     }
   },
 
@@ -1113,12 +1037,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'COMP-STELO-1501',
     observacoes: 'Fornece ar comprimido seco para todos os consultórios do CEO.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-25 11:45',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Almoxarifado e Farmácia Odontológica',
-      unidadeEncontrada: 'CEO – Centro de Especialidades Odontológicas'
+      conferido: false
     }
   },
 
@@ -1154,12 +1073,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'DIR-CEO-1601',
     observacoes: 'Gabinete do diretor do CEO.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-25 12:00',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Diretoria e Coordenação Geral do CEO',
-      unidadeEncontrada: 'CEO – Centro de Especialidades Odontológicas'
+      conferido: false
     }
   },
 
@@ -1195,13 +1109,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'ELX-REF-1651',
     observacoes: 'Refrigerador para conservação de alimentos dos funcionários e café da equipe.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-25 12:15',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: '004 - COPA',
-      subsetorEncontrado: '004 - COPA',
-      unidadeEncontrada: 'CEO – Centro de Especialidades Odontológicas'
+      conferido: false
     }
   },
   {
@@ -1235,8 +1143,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'MID-MIC-1652',
     observacoes: 'Micro-ondas da copa do CEO.',
     auditoria: {
-      conferido: false,
-      statusDivergencia: 'conforme'
+      conferido: false
     }
   },
   {
@@ -1270,8 +1177,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'IBBL-BEB-1653',
     observacoes: 'Bebedouro da copa do CEO.',
     auditoria: {
-      conferido: false,
-      statusDivergencia: 'conforme'
+      conferido: false
     }
   },
   {
@@ -1305,8 +1211,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'INX-MES-1654',
     observacoes: 'Mesa de refeições da copa.',
     auditoria: {
-      conferido: false,
-      statusDivergencia: 'conforme'
+      conferido: false
     }
   },
 
@@ -1344,12 +1249,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'ZEB-ZT230-1701',
     observacoes: 'Utilizada para impressão de etiquetas de patrimônio com código de barras e QR Code.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-20 14:00',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Gerência de Patrimônio e Bens Móveis',
-      unidadeEncontrada: 'Sede Administrativa do CPSMS'
+      conferido: false
     }
   },
   {
@@ -1383,12 +1283,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'ZEB-TC21-1702',
     observacoes: 'Equipamento de vistoria patrimonial da comissão.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-20 14:15',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Gerência de Patrimônio e Bens Móveis',
-      unidadeEncontrada: 'Sede Administrativa do CPSMS'
+      conferido: false
     }
   },
 
@@ -1424,12 +1319,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'DIR-CPSMS-1801',
     observacoes: 'Gabinete da presidência e diretoria executiva.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-20 15:00',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Diretoria Executiva e Presidência do CPSMS',
-      unidadeEncontrada: 'Sede Administrativa do CPSMS'
+      conferido: false
     }
   },
 
@@ -1465,12 +1355,7 @@ export const INITIAL_ASSETS: Asset[] = [
     numeroSerie: 'DELL-SRV-1901',
     observacoes: 'Servidor onde opera o banco de dados contábil e de prestação de contas do Consórcio.',
     auditoria: {
-      conferido: true,
-      dataConferencia: '2026-03-20 15:30',
-      responsavelConferencia: 'Comissão de Inventário',
-      statusDivergencia: 'conforme',
-      setorEncontrado: 'Setor Contábil, Financeiro e Prestação de Contas TCE-CE',
-      unidadeEncontrada: 'Sede Administrativa do CPSMS'
+      conferido: false
     }
   }
 ];
