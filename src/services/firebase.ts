@@ -4,6 +4,7 @@ import {
   collection, 
   doc, 
   setDoc, 
+  deleteDoc,
   getDocs, 
   onSnapshot, 
   writeBatch,
@@ -153,3 +154,40 @@ export async function fetchAllAssetsFromFirestore(): Promise<Asset[]> {
   snap.forEach(d => list.push(d.data() as Asset));
   return list;
 }
+
+/**
+ * Delete a single asset from Firestore
+ */
+export async function deleteAssetFromFirestore(assetId: string): Promise<void> {
+  const ref = doc(db, 'assets', assetId);
+  await deleteDoc(ref);
+}
+
+/**
+ * Delete all assets from Firestore collection in batches of 400
+ */
+export async function clearAllAssetsFromFirestore(): Promise<void> {
+  const colRef = collection(db, 'assets');
+  const snap = await getDocs(colRef);
+  const docs = snap.docs;
+  const CHUNK_SIZE = 400;
+  for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
+    const chunk = docs.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+    for (const d of chunk) {
+      batch.delete(d.ref);
+    }
+    await batch.commit();
+  }
+}
+
+/**
+ * Replace entire assets collection in Firestore with new assets
+ */
+export async function batchReplaceAssetsInFirestore(newAssets: Asset[]): Promise<void> {
+  await clearAllAssetsFromFirestore();
+  if (newAssets.length > 0) {
+    await batchSaveAssetsToFirestore(newAssets);
+  }
+}
+

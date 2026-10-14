@@ -25,7 +25,8 @@ import {
   Layers,
   MapPin,
   UserCheck,
-  Package
+  Package,
+  Trash2
 } from 'lucide-react';
 
 interface SmartImportModalProps {
@@ -35,6 +36,8 @@ interface SmartImportModalProps {
   sectors: Sector[];
   onImportCompleted: (importedAssets: Asset[], mode?: 'update' | 'replace') => void;
   existingCount?: number;
+  onClearAllData?: () => void;
+  onDeduplicateAssets?: () => void;
 }
 
 interface ColumnMapping {
@@ -64,6 +67,8 @@ export const SmartImportModal: React.FC<SmartImportModalProps> = ({
   sectors,
   onImportCompleted,
   existingCount = 0,
+  onClearAllData,
+  onDeduplicateAssets,
 }) => {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [inputMode, setInputMode] = useState<'file' | 'paste'>('file');
@@ -79,9 +84,10 @@ export const SmartImportModal: React.FC<SmartImportModalProps> = ({
   const [detectedRawRows, setDetectedRawRows] = useState<any[][]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Import mode
-  const [importMode, setImportMode] = useState<'update' | 'replace'>(existingCount > 0 ? 'update' : 'replace');
+  // Import mode: default to 'replace' to avoid accidental duplicated asset accumulation
+  const [importMode, setImportMode] = useState<'update' | 'replace'>('replace');
   const [showConfirmMissingDialog, setShowConfirmMissingDialog] = useState(false);
+  const [showConfirmClear, setShowConfirmClear] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const anyFileInputRef = useRef<HTMLInputElement>(null);
@@ -463,9 +469,13 @@ export const SmartImportModal: React.FC<SmartImportModalProps> = ({
       partial: ['serie', 'serial', 'chassi']
     });
 
+    // Garante que o campo de descrição não fique vazio
+    const tomboFinal = detectedTombamento || headers[0] || '';
+    const descFinal = detectedDescricao || headers.find(h => h !== tomboFinal) || headers[0] || '';
+
     setMapping({
-      tombamento: detectedTombamento || headers[0] || '',
-      descricao: detectedDescricao,
+      tombamento: tomboFinal,
+      descricao: descFinal,
       dataTombamento: detectedDataTombamento,
       dataAquisicao: detectedDataAquisicao,
       formaAquisicao: detectedFormaAquisicao,
@@ -500,77 +510,60 @@ export const SmartImportModal: React.FC<SmartImportModalProps> = ({
     }
   };
 
-  const processFile = (file: File) => {
+  const processFile = async (file: File) => {
     setErrorMessage(null);
-    const name = file.name;
-    const lowerName = name.toLowerCase();
+    const lowerName = file.name.toLowerCase();
 
-    const reader = new FileReader();
+    try {
+      const isExcelBinary = 
+        lowerName.endsWith('.xlsx') || 
+        lowerName.endsWith('.xls') || 
+        lowerName.endsWith('.xlsm') || 
+        lowerName.endsWith('.xlsb') || 
+        lowerName.endsWith('.ods');
 
-    if (
-      lowerName.endsWith('.xlsx') || 
-      lowerName.endsWith('.xls') || 
-      lowerName.endsWith('.xlsm') || 
-      lowerName.endsWith('.xlsb') || 
-      lowerName.endsWith('.ods')
-    ) {
-      reader.onload = (e) => {
+      if (isExcelBinary) {
         try {
-          const buffer = e.target?.result as ArrayBuffer;
-          const workbook = XLSX.read(buffer, { type: 'array' });
-          setRawWorkbook(workbook);
-          setSheetsList(workbook.SheetNames);
-          const firstSheet = workbook.SheetNames[0];
-          setSelectedSheet(firstSheet);
-          processWorkbookSheet(workbook, firstSheet, file.name);
-        } catch (err: any) {
-          setErrorMessage(`Falha ao ler arquivo Excel: ${err.message}. Tente salvar a planilha como .xlsx ou .csv.`);
-        }
-      };
-      reader.readAsArrayBuffer(file);
-    } else {
-      reader.onload = (e) => {
-        try {
-          const buffer = e.target?.result as ArrayBuffer;
-          const workbook = XLSX.read(buffer, { type: 'array' });
-          if (workbook && workbook.SheetNames.length > 0) {
+          const buffer = await file.arrayBuffer();
+          const workbook = XLSX.read(buffer, { type: 'array', cellDates: true, raw: false });
+          if (workbook && workbook.SheetNames && workbook.SheetNames.length > 0) {
             setRawWorkbook(workbook);
             setSheetsList(workbook.SheetNames);
-            setSelectedSheet(workbook.SheetNames[0]);
-            processWorkbookSheet(workbook, workbook.SheetNames[0], file.name);
+            const firstSheet = workbook.SheetNames[0];
+            setSelectedSheet(firstSheet);
+            processWorkbookSheet(workbook, firstSheet, file.name);
             return;
           }
-        } catch {
-          // fallback
+        } catch (excelErr: any) {
+          console.warn('Falha na leitura direta via XLSX, tentando parser CSV/texto:', excelErr);
         }
+      }
 
-        Papa.parse(file, {
-          header: false,
-          skipEmptyLines: false,
-          encoding: 'UTF-8',
-          complete: (results) => {
-            if (results.data && results.data.length > 0) {
-              process2DRows(results.data as any[][], file.name);
-            } else {
-              Papa.parse(file, {
-                header: false,
-                skipEmptyLines: false,
-                encoding: 'ISO-8859-1',
-                complete: (res2) => {
-                  process2DRows(res2.data as any[][], file.name);
-                },
-                error: (err2) => {
-                  setErrorMessage(`Erro ao ler CSV: ${err2.message}`);
-                }
-              });
-            }
-          },
-          error: (err) => {
-            setErrorMessage(`Erro ao ler arquivo: ${err.message}`);
-          }
-        });
-      };
-      reader.readAsArrayBuffer(file);
+      // Parser robusto para CSV / TSV / TXT ou fallback de arquivos exportados
+      const textBuffer = await file.arrayBuffer();
+      let textContent = new TextDecoder('utf-8').decode(textBuffer);
+      // Se contiver caracteres de substituição corrompidos (comum em arquivos ANSI/ISO-8859-1 do Excel Brasil)
+      if (textContent.includes('\uFFFD')) {
+        try {
+          textContent = new TextDecoder('iso-8859-1').decode(textBuffer);
+        } catch {
+          // mantém utf-8
+        }
+      }
+
+      const results = Papa.parse(textContent, {
+        header: false,
+        skipEmptyLines: 'greedy',
+        delimitersToGuess: [';', ',', '\t', '|']
+      });
+
+      if (results.data && results.data.length > 0) {
+        process2DRows(results.data as any[][], file.name);
+      } else {
+        setErrorMessage('Não foi possível identificar linhas ou colunas no arquivo selecionado.');
+      }
+    } catch (err: any) {
+      setErrorMessage(`Erro ao ler arquivo: ${err.message || 'Formato não reconhecido'}`);
     }
   };
 
@@ -579,6 +572,8 @@ export const SmartImportModal: React.FC<SmartImportModalProps> = ({
     if (file) {
       processFile(file);
     }
+    // Reseta o input para permitir escolher o mesmo arquivo novamente
+    e.target.value = '';
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -600,7 +595,8 @@ export const SmartImportModal: React.FC<SmartImportModalProps> = ({
     try {
       const results = Papa.parse(pasteText.trim(), {
         header: false,
-        skipEmptyLines: false,
+        skipEmptyLines: 'greedy',
+        delimitersToGuess: [';', ',', '\t', '|']
       });
 
       if (results.data && results.data.length > 0) {
@@ -627,10 +623,6 @@ export const SmartImportModal: React.FC<SmartImportModalProps> = ({
   };
 
   const handleInitiateImport = () => {
-    if (!mapping.descricao) {
-      setShowConfirmMissingDialog(true);
-      return;
-    }
     executeImport();
   };
 
@@ -793,8 +785,13 @@ export const SmartImportModal: React.FC<SmartImportModalProps> = ({
       // 15. Número de Série
       const serieVal = mapping.numeroSerie && row[mapping.numeroSerie] ? String(row[mapping.numeroSerie]).trim() : '';
 
+      const cleanTombo = tombamentoVal.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase();
+      let stableId = (cleanTombo && cleanTombo !== '0' && cleanTombo !== 'sn' && cleanTombo !== 'semtombo')
+        ? `ast-${cleanTombo}`
+        : `ast-item-${i + 1}`;
+
       importedList.push({
-        id: `ast-${Date.now()}-${i}`,
+        id: stableId,
         tombamento: tombamentoVal,
         origemTombo: origemVal,
         origemRecurso: origemRecursoVal,
@@ -847,10 +844,12 @@ export const SmartImportModal: React.FC<SmartImportModalProps> = ({
       cpsms: cpsmsCount,
       ufc: ufcCount,
     });
+
+    // Aguarda a gravação no IndexedDB e atualização do estado principal
+    await onImportCompleted(importedList, importMode);
+
     setIsProcessing(false);
     setStep(3);
-
-    onImportCompleted(importedList, importMode);
   };
 
   return (
@@ -891,6 +890,80 @@ export const SmartImportModal: React.FC<SmartImportModalProps> = ({
         {/* Step 1: Input options (File or Paste) */}
         {step === 1 && (
           <div className="space-y-4">
+            {/* Aviso de Base Atual & Opção de Apagar Planilhas Anteriores */}
+            {existingCount > 0 && (
+              <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-300 dark:border-amber-700/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+                <div className="space-y-0.5">
+                  <div className="font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>Base Atual: <strong>{existingCount.toLocaleString('pt-BR')} bens cadastrados</strong></span>
+                  </div>
+                  <div className="text-[11px] text-amber-800 dark:text-amber-300/90 leading-relaxed">
+                    Se você já enviou a mesma planilha e os itens estão somando duplicados, apague a base anterior antes de carregar ou desduplique.
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
+                  {onDeduplicateAssets && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await onDeduplicateAssets();
+                        onClose();
+                      }}
+                      className="flex-1 sm:flex-none px-3 py-2 font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1 min-h-[40px]"
+                      title="Desduplicar base existente"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Desduplicar Base
+                    </button>
+                  )}
+                  {onClearAllData && !showConfirmClear && (
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmClear(true)}
+                      className="flex-1 sm:flex-none px-3 py-2 font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1 min-h-[40px]"
+                      title="Apagar todas as planilhas para recomeçar com carga limpa"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Apagar Planilhas Anteriores
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* In-modal confirmation to clear before importing */}
+            {showConfirmClear && onClearAllData && (
+              <div className="p-3.5 bg-rose-50 dark:bg-rose-950/60 rounded-xl border-2 border-rose-400 dark:border-rose-700 text-xs text-rose-950 dark:text-rose-200 space-y-2 animate-in fade-in">
+                <p className="font-bold flex items-center gap-1.5 text-sm">
+                  <Trash2 className="w-4 h-4 text-rose-600" />
+                  Deseja realmente apagar todos os {existingCount.toLocaleString('pt-BR')} bens cadastrados?
+                </p>
+                <p className="text-[11px] opacity-90 leading-relaxed">
+                  Esta ação limpará as planilhas anteriores para você importar seu arquivo uma única vez do zero sem somar itens repetidos.
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await onClearAllData();
+                      setShowConfirmClear(false);
+                    }}
+                    className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg cursor-pointer min-h-[40px]"
+                  >
+                    Sim, Apagar Tudo Agora
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmClear(false)}
+                    className="px-3 py-2 bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 font-semibold rounded-lg cursor-pointer min-h-[40px]"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="flex border-b border-slate-200 dark:border-slate-800">
               <button
                 type="button"
@@ -1563,6 +1636,25 @@ export const SmartImportModal: React.FC<SmartImportModalProps> = ({
                   </span>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                     <label className={`p-2.5 rounded-lg border flex items-start gap-2 cursor-pointer transition-colors ${
+                      importMode === 'replace' 
+                        ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-400 text-rose-950 dark:text-rose-200 font-semibold ring-2 ring-rose-400/30' 
+                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="importMode"
+                        value="replace"
+                        checked={importMode === 'replace'}
+                        onChange={() => setImportMode('replace')}
+                        className="mt-0.5 text-rose-600"
+                      />
+                      <div>
+                        <div className="font-bold text-rose-800 dark:text-rose-300">Substituir Toda a Base (Recomendado se reenviou a planilha)</div>
+                        <div className="text-[11px] opacity-80">Limpa a base anterior e salva apenas esta nova planilha. Evita que os bens fiquem somando repetidos.</div>
+                      </div>
+                    </label>
+
+                    <label className={`p-2.5 rounded-lg border flex items-start gap-2 cursor-pointer transition-colors ${
                       importMode === 'update' 
                         ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 text-emerald-950 dark:text-emerald-200 font-semibold' 
                         : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
@@ -1576,27 +1668,8 @@ export const SmartImportModal: React.FC<SmartImportModalProps> = ({
                         className="mt-0.5 text-emerald-600"
                       />
                       <div>
-                        <div className="font-bold">Atualizar e Preencher Bens Existentes (Recomendado)</div>
-                        <div className="text-[11px] opacity-80">Preenche e atualiza todas as características pelo número do tombo, preservando auditorias já realizadas.</div>
-                      </div>
-                    </label>
-
-                    <label className={`p-2.5 rounded-lg border flex items-start gap-2 cursor-pointer transition-colors ${
-                      importMode === 'replace' 
-                        ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-400 text-rose-950 dark:text-rose-200 font-semibold' 
-                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
-                    }`}>
-                      <input
-                        type="radio"
-                        name="importMode"
-                        value="replace"
-                        checked={importMode === 'replace'}
-                        onChange={() => setImportMode('replace')}
-                        className="mt-0.5 text-rose-600"
-                      />
-                      <div>
-                        <div className="font-bold">Substituir Toda a Base de Dados</div>
-                        <div className="text-[11px] opacity-80">Limpa a base atual e cadastra o novo documento como base do zero.</div>
+                        <div className="font-bold">Atualizar e Mesclar com os Existentes</div>
+                        <div className="text-[11px] opacity-80">Mescla com a base atual atualizando dados pelo número de tombo sem criar duplicatas.</div>
                       </div>
                     </label>
                   </div>

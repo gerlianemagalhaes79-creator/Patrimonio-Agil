@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Asset, Sector, UnitInfo, UserProfile } from '../types';
 import { formatBRL, formatDate } from '../utils/formatters';
 import { executePrintHtml, downloadPrintableHtml } from '../utils/printHelper';
-import { doesAssetMatchRoom, doesAssetOfficiallyMatchRoom, doesAssetPhysicallyMatchRoom, getAssetFullLocation, getAssetOfficialRoomName } from '../utils/locationHelper';
+import { doesAssetMatchRoom, doesAssetOfficiallyMatchRoom, doesAssetPhysicallyMatchRoom, getAssetFullLocation, getAssetOfficialRoomName, getAssetUnitId } from '../utils/locationHelper';
 import { 
   X, 
   Printer, 
@@ -50,6 +50,7 @@ export const RoomComparisonModal: React.FC<RoomComparisonModalProps> = ({
   const [protocoloInput, setProtocoloInput] = useState<string>(() => `ASPEC-CONF-${new Date().getFullYear()}/${Math.floor(100 + Math.random() * 900)}`);
   const [parecerInput, setParecerInput] = useState<string>('Confirmo que a baixa contábil e as transferências de carga desta sala foram lançadas com êxito no sistema ASPEC.');
   const [filterType, setFilterType] = useState<'todos' | 'divergencias'>('todos');
+  const [showConfirmDiscard, setShowConfirmDiscard] = useState<boolean>(false);
 
   if (!isOpen || !sector) return null;
 
@@ -62,16 +63,20 @@ export const RoomComparisonModal: React.FC<RoomComparisonModalProps> = ({
   // 1. VERSÃO OFICIAL: "Sala de acordo com o ASPEC"
   // Todos os bens cadastrados no ASPEC para esta subárea / sala
   const aspecOfficialAssets = useMemo(() => {
+    const targetUnitId = (sector && 'unidadeId' in sector ? (sector as any).unidadeId : '') || unit?.id || '';
     return assets.filter(a => {
       if (a.foraDoAspec) return false;
+      if (targetUnitId && getAssetUnitId(a) !== targetUnitId) return false;
       return doesAssetOfficiallyMatchRoom(a, sectorName);
     });
-  }, [assets, sectorName]);
+  }, [assets, sectorName, sector, unit]);
 
   // 2. VERSÃO ATUALIZADA: "Sala atualizada fisicamente" (Conferência In Loco)
-  // Todos os bens localizados fisicamente nesta sala durante a conferência
+  // ESTRITAMENTE os bens que foram SELECIONADOS / CONFERIDOS pelo usuário nesta sala
   const physicalDraftAssets = useMemo(() => {
     return assets.filter(a => {
+      if (!a.auditoria?.conferido) return false;
+      if (a.auditoria?.statusDivergencia === 'nao_encontrado') return false;
       return doesAssetPhysicallyMatchRoom(a, sectorName);
     });
   }, [assets, sectorName]);
@@ -94,8 +99,14 @@ export const RoomComparisonModal: React.FC<RoomComparisonModalProps> = ({
     return physicalDraftAssets.filter(a => a.foraDoAspec);
   }, [physicalDraftAssets]);
 
-  // Validação: A sala está 100% OK de acordo com o ASPEC?
-  const isRoomAllOk = missingFromRoom.length === 0 && incomingTransfers.length === 0 && untrackedInRoom.length === 0 && aspecOfficialAssets.length > 0;
+  // Validação: A sala só está 100% OK se TODOS os bens do ASPEC foram conferidos/selecionados pelo usuário
+  const isRoomAllOk = 
+    aspecOfficialAssets.length > 0 &&
+    physicalDraftAssets.length === aspecOfficialAssets.length &&
+    aspecOfficialAssets.every(a => a.auditoria?.conferido && a.auditoria?.statusDivergencia !== 'nao_encontrado') &&
+    missingFromRoom.length === 0 && 
+    incomingTransfers.length === 0 && 
+    untrackedInRoom.length === 0;
 
   // Totais
   const totalAspecVal = aspecOfficialAssets.reduce((sum, a) => sum + (a.valorAquisicao || a.valorBrutoContabil || 0), 0);
@@ -756,20 +767,38 @@ export const RoomComparisonModal: React.FC<RoomComparisonModalProps> = ({
               <>
                 {/* Descartar Rascunho */}
                 {onDiscardDraft && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (confirm('Deseja descartar as alterações deste rascunho e manter a sala de acordo com o ASPEC original?')) {
-                        onDiscardDraft(sectorName);
-                        onClose();
-                      }
-                    }}
-                    className="px-3 py-2 text-xs font-semibold text-rose-700 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-950/60 rounded-xl transition-colors cursor-pointer flex items-center gap-1"
-                    title="Descartar rascunho temporário"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Descartar Rascunho</span>
-                  </button>
+                  !showConfirmDiscard ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmDiscard(true)}
+                      className="px-3 py-2 text-xs font-semibold text-rose-700 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-950/60 rounded-xl transition-colors cursor-pointer flex items-center gap-1"
+                      title="Descartar rascunho temporário"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Descartar Rascunho</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1 p-1 bg-rose-50 dark:bg-rose-950/60 rounded-lg border border-rose-300 dark:border-rose-700 text-xs">
+                      <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300 px-1">Descartar?</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onDiscardDraft(sectorName);
+                          onClose();
+                        }}
+                        className="px-2 py-1 bg-rose-600 text-white font-bold rounded cursor-pointer text-[11px]"
+                      >
+                        Sim
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmDiscard(false)}
+                        className="px-2 py-1 bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 rounded cursor-pointer text-[11px]"
+                      >
+                        Não
+                      </button>
+                    </div>
+                  )
                 )}
 
                 {/* Manter como Rascunho */}

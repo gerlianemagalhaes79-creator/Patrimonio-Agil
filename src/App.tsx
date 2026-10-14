@@ -29,12 +29,19 @@ import {
   clearAllDB 
 } from './utils/db';
 import { 
+  getAssetDeduplicationKey, 
+  deduplicateAssetsList, 
+  countDuplicateAssets 
+} from './utils/assetDeduplication';
+import { 
   testFirebaseConnection,
   subscribeToAssets,
   subscribeToTransfers,
   subscribeToTerms,
   saveAssetToFirestore,
   batchSaveAssetsToFirestore,
+  clearAllAssetsFromFirestore,
+  batchReplaceAssetsInFirestore,
   saveTransferToFirestore,
   saveTermToFirestore
 } from './services/firebase';
@@ -233,9 +240,12 @@ export default function App() {
         ]);
         const CLEAN_RESET_KEY = 'patrimonio_cpsms_clean_reset_v3';
         const isCleanResetDone = localStorage.getItem(CLEAN_RESET_KEY) === 'done';
+        const isExplicitlyCleared = localStorage.getItem('patrimonio_cpsms_explicitly_cleared') === 'true';
 
         let effectiveAssets = loadedAssets;
-        if (!isCleanResetDone) {
+        if (isExplicitlyCleared && (!loadedAssets || loadedAssets.length === 0)) {
+          effectiveAssets = [];
+        } else if (!isCleanResetDone) {
           // RESET CLEAN SLATE: Start completely pending with genuine assets (zero fake conferences)
           effectiveAssets = INITIAL_ASSETS.map(a => ({
             ...a,
@@ -245,7 +255,7 @@ export default function App() {
           }));
           saveAssetsToDB(effectiveAssets).catch(console.warn);
           localStorage.setItem(CLEAN_RESET_KEY, 'done');
-        } else if ((!effectiveAssets || effectiveAssets.length <= 1) && INITIAL_ASSETS.length > 1) {
+        } else if (!isExplicitlyCleared && (!effectiveAssets || effectiveAssets.length <= 1) && INITIAL_ASSETS.length > 1) {
           effectiveAssets = INITIAL_ASSETS;
           saveAssetsToDB(INITIAL_ASSETS).catch(console.warn);
         } else if (Array.isArray(effectiveAssets) && effectiveAssets.length > 1) {
@@ -285,6 +295,13 @@ export default function App() {
         const isCleanResetJustRun = !localStorage.getItem(CLEAN_RESET_KEY + '_cloud_synced');
 
         unsubscribeAssets = subscribeToAssets((cloudAssets) => {
+          const isExplicitlyCleared = localStorage.getItem('patrimonio_cpsms_explicitly_cleared') === 'true';
+          if (isExplicitlyCleared) {
+            // Se o usuário limpou a base explicitamente, não ressuscita dados antigos da nuvem
+            setAssets([]);
+            return;
+          }
+
           if (isCleanResetJustRun && localAssets.length > 0) {
             // First time clean slate: force overwrite cloud with clean zero-conference assets
             batchSaveAssetsToFirestore(localAssets).catch(console.warn);
@@ -292,28 +309,9 @@ export default function App() {
             return;
           }
           if (cloudAssets && cloudAssets.length > 0) {
-            setAssets(prev => {
-              if (!prev || prev.length === 0) {
-                saveAssetsToDB(cloudAssets);
-                return cloudAssets;
-              }
-              const cloudMap = new Map(cloudAssets.map(c => [c.id, c]));
-              const merged = prev.map(localA => {
-                const cloudA = cloudMap.get(localA.id);
-                if (!cloudA) return localA;
-                // Preserva conferência local se na nuvem ainda não tiver sido sincronizada
-                if (localA.auditoria?.conferido && !cloudA.auditoria?.conferido) {
-                  return localA;
-                }
-                return cloudA;
-              });
-              const localIds = new Set(prev.map(p => p.id));
-              cloudAssets.forEach(ca => {
-                if (!localIds.has(ca.id)) merged.push(ca);
-              });
-              saveAssetsToDB(merged);
-              return merged;
-            });
+            const { uniqueAssets } = deduplicateAssetsList(cloudAssets);
+            setAssets(uniqueAssets);
+            saveAssetsToDB(uniqueAssets);
           } else if (!initialAssetsCheckDone && localAssets.length > 0) {
             // First time sync: migrate existing local IndexedDB assets to Firebase Firestore
             batchSaveAssetsToFirestore(localAssets).catch(e => console.warn('Firebase initial migration error:', e));
@@ -769,37 +767,9 @@ export default function App() {
       console.warn('Failed to save reviewed room to localStorage:', e);
     }
 
-    // 3. Consolidate and mark checked ALL assets in this sector
-    const updatedAssets = assets.map(a => {
-      const isMatch = doesAssetMatchRoom(a, sectorName) || 
-                      doesAssetMatchRoom(a, sectorIdOrName) ||
-                      (a.setorNome && normalizeLoc(a.setorNome) === sectorNorm) ||
-                      (a.subarea && normalizeLoc(a.subarea) === sectorNorm) ||
-                      (a.subsetorNome && normalizeLoc(a.subsetorNome) === sectorNorm) ||
-                      (targetSector && a.setorId === targetSector.id);
-
-      if (isMatch) {
-        const audited: Asset = {
-          ...a,
-          auditoria: {
-            ...a.auditoria,
-            conferido: true,
-            dataConferencia: a.auditoria?.dataConferencia || new Date().toISOString(),
-            responsavelConferencia: a.auditoria?.responsavelConferencia || currentProfile.nome,
-            observacaoAuditoria: a.auditoria?.observacaoAuditoria || 'Sala concluída e conferida no inventário físico',
-            statusDivergencia: a.auditoria?.statusDivergencia === 'nao_encontrado' ? 'nao_encontrado' : (a.auditoria?.statusDivergencia || 'conforme'),
-            setorEncontrado: sectorName,
-            unidadeEncontrada: targetSector?.unidadeNome || a.unidadeNome,
-          }
-        };
-        saveAssetToFirestore(audited).catch(e => console.warn('Firestore err:', e));
-        return audited;
-      }
-      return a;
-    });
-
-    setAssets(updatedAssets);
-    saveAssetsToDB(updatedAssets).catch(e => console.warn('IndexedDB err:', e));
+    // 3. Preserva ESTRITAMENTE as escolhas do vistoriador:
+    // NÃO marca em massa conferido=true nos bens não selecionados.
+    // Apenas os bens que o usuário efetivamente conferiu/selecionou in loco permanecem conferidos.
 
     const dur = Math.max(5, Math.round(performance.now() - t0));
     setLastQueryDurationMs(dur);
@@ -860,10 +830,69 @@ export default function App() {
   };
 
   const handleClearAllData = async () => {
-    await clearAllDB();
-    setAssets([]);
-    setTransfers([]);
-    setTerms([]);
+    const t0 = performance.now();
+    setIsProcessing(true);
+    try {
+      // 1. Zera estados em memória IMEDIATAMENTE para resposta visual instantânea
+      setAssets([]);
+      setTransfers([]);
+      setTerms([]);
+
+      // 2. Marca flag de limpeza explícita e limpa todos os caches
+      localStorage.setItem('patrimonio_cpsms_explicitly_cleared', 'true');
+      localStorage.removeItem('patrimonio_cpsms_assets_v2');
+      localStorage.removeItem('cpsms_reviewed_rooms');
+      localStorage.removeItem('cpsms_room_consolidated');
+      localStorage.removeItem('cpsms_room_drafts');
+      localStorage.removeItem('patrimonio_cpsms_reviewed_rooms_v1');
+
+      // 3. Limpa IndexedDB local
+      await clearAllDB();
+
+      // 4. Limpa o Google Cloud Firestore
+      if (firebaseStatus === 'connected') {
+        try {
+          await clearAllAssetsFromFirestore();
+        } catch (fErr) {
+          console.warn('Aviso ao limpar Firestore:', fErr);
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao limpar base de bens:', err);
+    } finally {
+      setIsProcessing(false);
+      setLastQueryDurationMs(Math.max(5, Math.round(performance.now() - t0)));
+    }
+  };
+
+  const handleDeduplicateAssets = async () => {
+    const t0 = performance.now();
+    setIsProcessing(true);
+    try {
+      // Desduplica rigorosamente usando a biblioteca especializada com preservação de auditoria
+      const { uniqueAssets, removedCount } = deduplicateAssetsList(assets);
+
+      // 1. Salva no IndexedDB
+      await saveAssetsToDB(uniqueAssets);
+
+      // 2. Substitui no Cloud Firestore
+      if (firebaseStatus === 'connected') {
+        try {
+          await batchReplaceAssetsInFirestore(uniqueAssets);
+        } catch (fErr) {
+          console.warn('Aviso ao sincronizar no Firestore:', fErr);
+        }
+      }
+
+      setAssets(uniqueAssets);
+      return removedCount;
+    } catch (err) {
+      console.error('Erro ao desduplicar base:', err);
+      return 0;
+    } finally {
+      setIsProcessing(false);
+      setLastQueryDurationMs(Math.max(5, Math.round(performance.now() - t0)));
+    }
   };
 
   const handleResetAllAuditsToCleanSlate = async () => {
@@ -900,87 +929,52 @@ export default function App() {
     }
   };
 
-  const handleSmartImportBatch = (importedList: Asset[], mode: 'update' | 'replace' = 'update') => {
-    if (mode === 'replace') {
-      setAssets(importedList);
-      batchSaveAssetsToFirestore(importedList).catch(e => console.warn('Firestore batch import err:', e));
-    } else {
-      setAssets(prev => {
-        if (prev.length === 0) {
-          batchSaveAssetsToFirestore(importedList).catch(e => console.warn('Firestore batch import err:', e));
-          return importedList;
+  const handleSmartImportBatch = async (importedList: Asset[], mode: 'update' | 'replace' = 'update') => {
+    const t0 = performance.now();
+    setIsProcessing(true);
+    try {
+      // 1. Limpa imediatamente a flag de base apagada para que o sistema reconheça a nova planilha
+      localStorage.removeItem('patrimonio_cpsms_explicitly_cleared');
+
+      // 2. Desduplica os itens dentro da própria planilha importada
+      const { uniqueAssets: uniqueImported } = deduplicateAssetsList(importedList);
+
+      let targetList: Asset[] = [];
+
+      if (mode === 'replace') {
+        // Modo SUBSTITUIR: Limpa o banco local e define a base exatamente como a planilha importada
+        targetList = uniqueImported;
+        await clearAllDB();
+      } else {
+        // Modo ATUALIZAR / MESCLAR: Combina com os existentes sem somar duplicatas
+        const combined = [...assets, ...uniqueImported];
+        const { uniqueAssets: merged } = deduplicateAssetsList(combined);
+        targetList = merged;
+      }
+
+      // 3. Atualiza estado em memória e filtros IMEDIATAMENTE (resposta visual imediata)
+      setAssets(targetList);
+      setSelectedUnitFilter('all');
+      setActiveTab('assets');
+
+      // 4. Salva no IndexedDB local de forma persistente
+      await saveAssetsToDB(targetList);
+
+      // 5. Atualiza o Cloud Firestore de forma resiliente
+      if (firebaseStatus === 'connected') {
+        try {
+          await batchReplaceAssetsInFirestore(targetList);
+        } catch (fErr) {
+          console.warn('Aviso sincronizando importação com Firestore:', fErr);
         }
-
-        // Map existing by tombamento (normalized)
-        const existingMap = new Map<string, Asset>(
-          prev.map(a => [a.tombamento.toLowerCase().trim(), a])
-        );
-        const newAssets: Asset[] = [];
-
-        for (const item of importedList) {
-          const key = item.tombamento.toLowerCase().trim();
-          const existing = existingMap.get(key);
-          if (existing) {
-            // Update existing asset with single unified valor
-            const newValor = item.valorAquisicao > 0 ? item.valorAquisicao : existing.valorAquisicao;
-
-            existingMap.set(key, {
-              ...existing,
-              // 1. Nome do Patrimônio / Nome do Item (ex: fogão)
-              descricao: item.descricao && !item.descricao.startsWith('Bem Patrimonial nº')
-                ? item.descricao
-                : (existing.descricao.startsWith('Bem Patrimonial nº') && item.descricao ? item.descricao : (item.descricao || existing.descricao)),
-              // 2. Data de Tombamento
-              dataTombamento: item.dataTombamento || existing.dataTombamento,
-              // 3. Número do Tombo
-              tombamento: item.tombamento || existing.tombamento,
-              // 4. NF caso tenha
-              notaFiscal: (item.notaFiscal && item.notaFiscal !== 'S/N') ? item.notaFiscal : (existing.notaFiscal || item.notaFiscal),
-              // 5. Estado de Conservação
-              estado: item.estado || existing.estado,
-              // 6. Origem do Recurso
-              origemRecurso: item.origemRecurso || existing.origemRecurso,
-              // 7. Fornecedor
-              fornecedor: (item.fornecedor && !item.fornecedor.includes('Não informado')) ? item.fornecedor : (existing.fornecedor || item.fornecedor),
-              // 8. Órgão
-              orgao: item.orgao || existing.orgao,
-              // 9. Área
-              area: item.area || existing.area || item.setorNome || existing.setorNome,
-              // 10. Subárea
-              subarea: item.subarea || existing.subarea || item.subsetorNome || existing.subsetorNome,
-              // 11. Responsável
-              responsavelNome: item.responsavelNome || existing.responsavelNome,
-              // 12. Data de Aquisição
-              dataAquisicao: item.dataAquisicao || existing.dataAquisicao,
-              // 13. Forma de Aquisição
-              formaAquisicao: item.formaAquisicao || existing.formaAquisicao,
-              // 14. Valor do Bem (R$)
-              valorAquisicao: newValor,
-              valorBrutoContabil: newValor,
-              valorResidual: newValor,
-              valorLiquidoContabil: newValor,
-              depreciacaoAcumulada: 0,
-              // Secondary fields
-              unidadeNome: item.unidadeNome || existing.unidadeNome,
-              unidadeId: item.unidadeId || existing.unidadeId,
-              setorNome: item.setorNome || existing.setorNome,
-              setorId: item.setorId || existing.setorId,
-              subsetorNome: item.subsetorNome || existing.subsetorNome,
-              origemTombo: item.origemTombo || existing.origemTombo,
-              categoria: item.categoria || existing.categoria,
-              numeroSerie: item.numeroSerie || existing.numeroSerie,
-            });
-          } else {
-            newAssets.push(item);
-          }
-        }
-
-        const merged = [...newAssets, ...Array.from(existingMap.values())];
-        batchSaveAssetsToFirestore(merged).catch(e => console.warn('Firestore batch import err:', e));
-        return merged;
-      });
+      }
+    } catch (err) {
+      console.error('Erro na importação de planilha:', err);
+    } finally {
+      setIsProcessing(false);
+      setLastQueryDurationMs(Math.max(5, Math.round(performance.now() - t0)));
+      setActiveTab('assets');
     }
-    setActiveTab('assets');
   };
 
   return (
@@ -1087,6 +1081,8 @@ export default function App() {
               setInitialMacroForReport(selectedUnitFilter);
               setIsMacroMicroReportOpen(true);
             }}
+            onClearAllData={handleClearAllData}
+            onDeduplicateAssets={handleDeduplicateAssets}
           />
         )}
 
@@ -1221,6 +1217,8 @@ export default function App() {
           sectors={sectors}
           onImportCompleted={handleSmartImportBatch}
           existingCount={assets.length}
+          onClearAllData={handleClearAllData}
+          onDeduplicateAssets={handleDeduplicateAssets}
         />
       )}
 

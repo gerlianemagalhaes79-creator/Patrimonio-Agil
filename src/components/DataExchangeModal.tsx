@@ -20,6 +20,8 @@ export const DataExchangeModal: React.FC<DataExchangeModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
+  const [showConfirmClear, setShowConfirmClear] = React.useState(false);
+
   const handleDownloadTemplate = () => {
     const templateHeader = [
       'Tombamento;OrigemTombo;Descricao;Unidade;Setor;SubsetorSala;Responsavel;Categoria;Estado;ValorAquisicao;NotaFiscal;NumeroSerie'
@@ -126,19 +128,44 @@ export const DataExchangeModal: React.FC<DataExchangeModalProps> = ({
               Limpar Todos os Bens Cadastrados
             </div>
             <p className="text-xs text-slate-600 dark:text-slate-400">
-              Remove todos os registros para você reiniciar o cadastro do zero caso necessário.
+              Remove todos os {assets.length.toLocaleString('pt-BR')} registros para você reiniciar o cadastro do zero caso necessário.
             </p>
-            <button
-              onClick={() => {
-                if (confirm('Deseja realmente limpar todos os bens patrimoniais do sistema? Esta ação é irreversível.')) {
-                  onClearAllData();
-                  onClose();
-                }
-              }}
-              className="w-full py-2 px-3 text-xs font-semibold text-rose-600 hover:bg-rose-100 dark:hover:bg-rose-950/60 rounded-lg transition-colors border border-rose-200 dark:border-rose-800 min-h-[44px] cursor-pointer"
-            >
-              Zerar Base de Bens
-            </button>
+
+            {!showConfirmClear ? (
+              <button
+                type="button"
+                onClick={() => setShowConfirmClear(true)}
+                className="w-full py-2 px-3 text-xs font-semibold text-rose-600 hover:bg-rose-100 dark:hover:bg-rose-950/60 rounded-lg transition-colors border border-rose-200 dark:border-rose-800 min-h-[44px] cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                Zerar Base de Bens ({assets.length} itens)
+              </button>
+            ) : (
+              <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-rose-300 dark:border-rose-800 space-y-2 text-xs">
+                <p className="font-bold text-rose-600 dark:text-rose-400">
+                  Tem certeza que deseja apagar todos os bens cadastrados?
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClearAllData();
+                      onClose();
+                    }}
+                    className="flex-1 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg transition-colors cursor-pointer text-center"
+                  >
+                    Sim, Apagar Tudo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmClear(false)}
+                    className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold rounded-lg transition-colors cursor-pointer text-center"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

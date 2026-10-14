@@ -76,14 +76,17 @@ export const NewAssetModal: React.FC<NewAssetModalProps> = ({
   const currentSector = sectors.find(s => s.id === setorId) || availableSectors[0];
   const currentUnit = units.find(u => u.id === unidadeId) || units[0];
 
+  const [validationError, setValidationError] = React.useState<string | null>(null);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setValidationError(null);
     if (!descricao.trim()) {
-      alert('Informe a descrição do bem.');
+      setValidationError('Informe a descrição do bem.');
       return;
     }
     if (!currentSector) {
-      alert('Selecione o setor de lotação.');
+      setValidationError('Selecione o setor de lotação.');
       return;
     }
 
@@ -161,6 +164,15 @@ export const NewAssetModal: React.FC<NewAssetModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4 text-xs sm:text-sm">
+          {validationError && (
+            <div className="p-3 bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-xs rounded-xl border border-rose-200 dark:border-rose-800 font-semibold flex items-center justify-between">
+              <span>{validationError}</span>
+              <button type="button" onClick={() => setValidationError(null)} className="cursor-pointer p-1">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           {/* Row: Origem do Tombo (CPSMS, SESA, UFC) */}
           <div className="p-3 bg-emerald-50/50 dark:bg-emerald-950/20 rounded-xl border border-emerald-200 dark:border-emerald-800 space-y-2">
             <div className="flex items-center justify-between">

@@ -4,6 +4,7 @@ import { formatBRL, formatDate, exportAssetsToCsv } from '../utils/formatters';
 import { generateBarcodeSvg, generateQrSvg } from '../utils/codeGenerators';
 import { FilteredAssetsReportModal } from './FilteredAssetsReportModal';
 import { AspecOfficializationModal } from './AspecOfficializationModal';
+import { countDuplicateAssets } from '../utils/assetDeduplication';
 import { 
   Search, 
   Filter, 
@@ -29,7 +30,9 @@ import {
   Truck,
   Tag,
   ShoppingBag,
-  ClipboardList
+  ClipboardList,
+  Trash2,
+  Sparkles
 } from 'lucide-react';
 
 export const getFormaAquisicaoBadge = (formaRaw?: string) => {
@@ -84,6 +87,8 @@ interface AssetsViewProps {
   onOpenSmartImport: () => void;
   onUpdateAsset?: (asset: Asset) => void;
   onOpenMacroMicroReport?: () => void;
+  onClearAllData?: () => Promise<void> | void;
+  onDeduplicateAssets?: () => Promise<number | void> | void;
 }
 
 export const AssetsView: React.FC<AssetsViewProps> = ({
@@ -99,6 +104,8 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
   onOpenSmartImport,
   onUpdateAsset,
   onOpenMacroMicroReport,
+  onClearAllData,
+  onDeduplicateAssets,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSectorId, setSelectedSectorId] = useState<string>('all');
@@ -111,6 +118,47 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
   const [printingPlaqueAsset, setPrintingPlaqueAsset] = useState<Asset | null>(null);
   const [showPrintReportModal, setShowPrintReportModal] = useState<boolean>(false);
   const [assetToOfficialize, setAssetToOfficialize] = useState<Asset | null>(null);
+
+  const [showClearAllModal, setShowClearAllModal] = useState(false);
+  const [showDeduplicateModal, setShowDeduplicateModal] = useState(false);
+  const [isActionProcessing, setIsActionProcessing] = useState(false);
+  const [actionSuccessNotice, setActionSuccessNotice] = useState<string | null>(null);
+
+  // Calcula quantidade de bens com tombamento ou chave repetida (planilhas importadas mais de uma vez)
+  const { duplicatesCount, duplicateGroupsCount } = useMemo(() => {
+    return countDuplicateAssets(assets);
+  }, [assets]);
+
+  const handleConfirmClearAll = async () => {
+    if (!onClearAllData) return;
+    setIsActionProcessing(true);
+    try {
+      await onClearAllData();
+      setShowClearAllModal(false);
+      setActionSuccessNotice('Todas as planilhas e bens cadastrados foram apagados do sistema com sucesso. A base está pronta para uma nova importação limpa.');
+      setTimeout(() => setActionSuccessNotice(null), 7000);
+    } catch (err) {
+      console.error('Erro ao apagar planilhas:', err);
+    } finally {
+      setIsActionProcessing(false);
+    }
+  };
+
+  const handleConfirmDeduplicate = async () => {
+    if (!onDeduplicateAssets) return;
+    setIsActionProcessing(true);
+    try {
+      const removed = await onDeduplicateAssets();
+      setShowDeduplicateModal(false);
+      const countLabel = typeof removed === 'number' ? removed : duplicatesCount;
+      setActionSuccessNotice(`Base desduplicada com sucesso! ${countLabel} bens repetidos foram removidos.`);
+      setTimeout(() => setActionSuccessNotice(null), 7000);
+    } catch (err) {
+      console.error('Erro ao desduplicar base:', err);
+    } finally {
+      setIsActionProcessing(false);
+    }
+  };
 
   // Officialization Handler: Gestora gives official OK after confirming definitive baixa in ASPEC
   const handleConfirmOfficialization = (asset: Asset, protocolo: string, parecer: string) => {
@@ -430,6 +478,65 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
 
   return (
     <div className="no-print space-y-5 pb-24">
+      {/* Mensagem de sucesso de ação */}
+      {actionSuccessNotice && (
+        <div className="p-3 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200 rounded-xl text-xs font-semibold flex items-center justify-between shadow-xs">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span>{actionSuccessNotice}</span>
+          </div>
+          <button
+            onClick={() => setActionSuccessNotice(null)}
+            className="text-emerald-700 hover:text-emerald-900 dark:text-emerald-400 cursor-pointer p-1"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Alerta de Planilhas Repetidas / Bens Duplicados Somando */}
+      {duplicatesCount > 0 && (
+        <div className="p-4 bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-600 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="p-2.5 bg-amber-500 text-slate-950 rounded-xl font-bold shrink-0 mt-0.5">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-amber-950 dark:text-amber-100 flex items-center gap-2">
+                Atenção: Detectamos {duplicatesCount.toLocaleString('pt-BR')} itens repetidos somando no inventário!
+              </h4>
+              <p className="text-xs text-amber-900 dark:text-amber-200/90 mt-0.5 leading-relaxed">
+                A mesma planilha foi carregada mais de uma vez (total de <strong>{assets.length.toLocaleString('pt-BR')} bens</strong> carregados). Você pode <strong>desduplicar</strong> agora para manter apenas 1 registro único de cada bem preservando suas conferências, ou <strong>apagar as planilhas</strong> para começar do zero.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0 w-full md:w-auto">
+            {onDeduplicateAssets && (
+              <button
+                type="button"
+                onClick={() => setShowDeduplicateModal(true)}
+                className="flex-1 md:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg shadow-sm transition-all cursor-pointer min-h-[42px]"
+                title="Remover repetições e manter registros únicos com conferências"
+              >
+                <Sparkles className="w-4 h-4 text-slate-950" />
+                <span>Desduplicar ({duplicatesCount})</span>
+              </button>
+            )}
+            {onClearAllData && (
+              <button
+                type="button"
+                onClick={() => setShowClearAllModal(true)}
+                className="flex-1 md:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white rounded-lg shadow-sm transition-all cursor-pointer min-h-[42px]"
+                title="Apagar todas as planilhas cadastradas e zerar os bens"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Apagar Planilhas / Zerar Base</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Top Filter and Actions Bar */}
       <div className="bg-white dark:bg-slate-900 rounded-xl p-4 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
         {/* Database Status Alert */}
@@ -447,15 +554,22 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
             </span>
           </div>
 
-          {assets.length === 0 && (
-            <button
-              onClick={onOpenSmartImport}
-              className="text-xs text-emerald-600 dark:text-emerald-400 font-bold hover:underline flex items-center gap-1 cursor-pointer"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              Importar Planilha (2.849 Bens)
-            </button>
-          )}
+          <div className="flex items-center gap-3">
+            {duplicatesCount > 0 && (
+              <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800">
+                {duplicatesCount} duplicatas detectadas
+              </span>
+            )}
+            {assets.length === 0 && (
+              <button
+                onClick={onOpenSmartImport}
+                className="text-xs text-emerald-600 dark:text-emerald-400 font-bold hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                Importar Planilha (2.849 Bens)
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
@@ -520,6 +634,35 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
                   <FileSpreadsheet className="w-4 h-4" />
                   <span>Importar Planilha</span>
                 </button>
+
+                {/* Desduplicar no Toolbar */}
+                {duplicatesCount > 0 && onDeduplicateAssets && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDeduplicateModal(true)}
+                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg transition-colors cursor-pointer min-h-[44px] shadow-xs"
+                    title={`Remover ${duplicatesCount} bens repetidos e manter conferências`}
+                  >
+                    <Sparkles className="w-4 h-4 text-slate-950" />
+                    <span className="hidden lg:inline">Desduplicar</span>
+                    <span className="px-1.5 py-0.5 rounded-full bg-amber-600 text-white text-[10px] font-mono">
+                      {duplicatesCount}
+                    </span>
+                  </button>
+                )}
+
+                {/* Apagar Planilhas / Zerar Base no Toolbar */}
+                {assets.length > 0 && onClearAllData && (
+                  <button
+                    type="button"
+                    onClick={() => setShowClearAllModal(true)}
+                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white rounded-lg transition-colors cursor-pointer min-h-[44px] shadow-xs"
+                    title="Apagar todas as planilhas e bens cadastrados para começar do zero"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Apagar Planilhas</span>
+                  </button>
+                )}
 
                 <button
                   onClick={onOpenNewAssetModal}
@@ -2255,6 +2398,108 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
         currentProfile={currentProfile}
         onConfirm={handleConfirmOfficialization}
       />
+
+      {/* Modal de Confirmação: Apagar Todas as Planilhas / Zerar Base */}
+      {showClearAllModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-rose-200 dark:border-rose-900/60 shadow-2xl max-w-md w-full p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-12 h-12 rounded-xl bg-rose-100 dark:bg-rose-950/80 text-rose-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Apagar Planilhas e Bens Cadastrados
+                </h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400">
+                  Esta ação limpará completamente os registros para você recomeçar.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-rose-50 dark:bg-rose-950/30 rounded-xl border border-rose-200 dark:border-rose-900/40 text-xs text-rose-900 dark:text-rose-200 space-y-2">
+              <p className="font-semibold">
+                ⚠️ Você está prestes a apagar <strong>{assets.length.toLocaleString('pt-BR')} bens</strong> do sistema.
+              </p>
+              <p className="text-[11px] leading-relaxed opacity-90">
+                Use esta opção caso tenha importado a mesma planilha várias vezes e os itens estejam somando. Após a limpeza, o sistema ficará com <strong>0 bens</strong> e você poderá carregar o arquivo correto uma única vez.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowClearAllModal(false)}
+                disabled={isActionProcessing}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer min-h-[44px]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmClearAll}
+                disabled={isActionProcessing}
+                className="px-4 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white rounded-xl transition-colors shadow-sm cursor-pointer flex items-center gap-1.5 min-h-[44px]"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>{isActionProcessing ? 'Apagando Base...' : 'Sim, Apagar Tudo Agora'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Confirmação: Desduplicar / Remover Repetidos */}
+      {showDeduplicateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-amber-200 dark:border-amber-800 shadow-2xl max-w-md w-full p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-12 h-12 rounded-xl bg-amber-100 dark:bg-amber-950/80 text-amber-600 flex items-center justify-center shrink-0">
+                <Sparkles className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Desduplicar Base de Bens
+                </h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400">
+                  Remover bens cadastrados em duplicidade
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-amber-50 dark:bg-amber-950/30 rounded-xl border border-amber-200 dark:border-amber-800 text-xs text-amber-950 dark:text-amber-200 space-y-2">
+              <p className="font-semibold">
+                Detectamos <strong>{duplicatesCount.toLocaleString('pt-BR')} itens repetidos</strong> (em {duplicateGroupsCount} grupos de repetição).
+              </p>
+              <p className="text-[11px] leading-relaxed opacity-90">
+                O sistema irá consolidar a base mantendo <strong>apenas 1 registro único</strong> para cada tombo. 
+                <br /><br />
+                ✅ <strong>Conferências preservadas:</strong> se você já realizou a vistoria de alguma sala ou marcou bens como conferidos, o status de conferido não será perdido!
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowDeduplicateModal(false)}
+                disabled={isActionProcessing}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer min-h-[44px]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeduplicate}
+                disabled={isActionProcessing}
+                className="px-4 py-2 text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl transition-colors shadow-sm cursor-pointer flex items-center gap-1.5 min-h-[44px]"
+              >
+                <Sparkles className="w-4 h-4 text-slate-950" />
+                <span>{isActionProcessing ? 'Desduplicando...' : `Confirmar Remoção de ${duplicatesCount} Repetidos`}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

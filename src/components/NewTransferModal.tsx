@@ -69,18 +69,21 @@ export const NewTransferModal: React.FC<NewTransferModalProps> = ({
   const destSector = sectors.find(s => s.id === destinationSectorId) || destSectorsList[0];
   const destUnit = units.find(u => u.id === destinationUnitId);
 
+  const [validationError, setValidationError] = useState<string | null>(null);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setValidationError(null);
     if (!selectedAsset) {
-      alert('Nenhum bem patrimonial selecionado.');
+      setValidationError('Nenhum bem patrimonial selecionado.');
       return;
     }
     if (!destSector || !destUnit) {
-      alert('Selecione o setor e unidade de destino.');
+      setValidationError('Selecione o setor e unidade de destino.');
       return;
     }
     if (!transferReason.trim()) {
-      alert('Informe a justificativa do remanejamento.');
+      setValidationError('Informe a justificativa do remanejamento.');
       return;
     }
 
@@ -132,6 +135,15 @@ export const NewTransferModal: React.FC<NewTransferModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4 text-xs sm:text-sm">
+          {validationError && (
+            <div className="p-3 bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-xs rounded-xl border border-rose-200 dark:border-rose-800 font-semibold flex items-center justify-between">
+              <span>{validationError}</span>
+              <button type="button" onClick={() => setValidationError(null)} className="cursor-pointer p-1">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           {/* 1. Asset */}
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">

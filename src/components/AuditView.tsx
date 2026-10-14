@@ -218,6 +218,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
     targetUnit: string;
   } | null>(null);
   const [assetToOfficialize, setAssetToOfficialize] = useState<Asset | null>(null);
+  const [showResetAllConfirmModal, setShowResetAllConfirmModal] = useState(false);
 
   // Camera / Optional Scanner State
   const [cameraActive, setCameraActive] = useState(false);
@@ -451,10 +452,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
   const handleConcludeRoomWithPdf = () => {
     if (!activeSector) return;
 
-    // 1. Confirmar quaisquer itens pendentes da sala
-    handleConfirmAllInSector();
-
-    // 2. Marcar sala como concluída/revisada no estado principal
+    // 1. Marcar sala como concluída/revisada no estado principal mantendo estritamente os bens selecionados pelo usuário
     if (onConcludeRoom) {
       onConcludeRoom(activeSector.id || activeSector.nome, activeSector.nome);
     }
@@ -579,12 +577,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
     const sect = targetSectorObj || activeSector;
     if (!sect) return;
 
-    // 1. Se estiver dentro da sala, confirma todos os bens pendentes
-    if (sect.id === activeSector?.id) {
-      handleConfirmAllInSector();
-    }
-
-    // 2. Marcar sala no estado principal
+    // 1. Marcar sala no estado principal preservando as escolhas do usuário
     if (onConcludeRoom) {
       onConcludeRoom(sect.id || sect.nome, sect.nome);
     }
@@ -1274,13 +1267,10 @@ export const AuditView: React.FC<AuditViewProps> = ({
   // Generate standalone printable HTML for the current room
   const generateRoomSheetHtml = (): string => {
     if (!activeSector) return '';
-    const secLower = activeSector.nome.trim().toLowerCase();
+    const targetUnitId = (activeSector as any).unidadeId || activeUnitInfo.id;
     const roomAssets = assets.filter(a => {
-      const aSetor = (a.setorNome || '').trim().toLowerCase();
-      const aArea = (a.area || '').trim().toLowerCase();
-      const aSub = (a.subsetorNome || a.subarea || '').trim().toLowerCase();
-      const aEncontrado = (a.auditoria?.setorEncontrado || '').trim().toLowerCase();
-      return aSetor === secLower || aSub === secLower || aArea === secLower || aEncontrado === secLower;
+      if (targetUnitId && getAssetUnitId(a) !== targetUnitId) return false;
+      return doesAssetMatchRoom(a, activeSector.nome);
     });
 
     const emissionDate = new Date();
@@ -1859,11 +1849,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
                   {onResetAllAudits && (
                     <button
                       type="button"
-                      onClick={() => {
-                        if (window.confirm('Atenção: Deseja reiniciar todas as conferências para começar do zero? Todas as salas e bens voltarão ao status Pendente.')) {
-                          onResetAllAudits();
-                        }
-                      }}
+                      onClick={() => setShowResetAllConfirmModal(true)}
                       className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 border border-slate-300 dark:border-slate-700 rounded-xl shadow-2xs hover:border-rose-300 transition-all cursor-pointer shrink-0"
                       title="Reiniciar todas as conferências para começar do zero (tudo pendente)"
                     >
@@ -4102,6 +4088,57 @@ export const AuditView: React.FC<AuditViewProps> = ({
           currentProfile={currentProfile}
           defaultUnitId={selectedUnitId}
         />
+      )}
+
+      {/* Modal de Confirmação: Começar do Zero (Reset de Conferências) */}
+      {showResetAllConfirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-rose-200 dark:border-rose-900/60 shadow-2xl max-w-md w-full p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-12 h-12 rounded-xl bg-rose-100 dark:bg-rose-950/80 text-rose-600 flex items-center justify-center shrink-0">
+                <RotateCcw className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Reiniciar Todas as Conferências
+                </h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400">
+                  Começar do zero como se nada tivesse sido visto ainda.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-rose-50 dark:bg-rose-950/30 rounded-xl border border-rose-200 dark:border-rose-900/40 text-xs text-rose-900 dark:text-rose-200 space-y-2">
+              <p className="font-semibold">
+                ⚠️ Todas as salas e bens voltarão ao status <strong>⏳ Pendente</strong>.
+              </p>
+              <p className="text-[11px] leading-relaxed opacity-90">
+                As marcações de salas conferidas e bens auditados serão resetadas para você fazer o levantamento real presencialmente do zero. Os bens cadastrados não serão apagados.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowResetAllConfirmModal(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer min-h-[44px]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowResetAllConfirmModal(false);
+                  onResetAllAudits?.();
+                }}
+                className="px-4 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white rounded-xl transition-colors shadow-sm cursor-pointer flex items-center gap-1.5 min-h-[44px]"
+              >
+                <RotateCcw className="w-4 h-4" />
+                <span>Sim, Começar do Zero</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

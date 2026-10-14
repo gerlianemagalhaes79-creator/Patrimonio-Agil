@@ -6,6 +6,8 @@ import {
   doesAssetOfficiallyMatchRoom, 
   doesAssetPhysicallyMatchRoom, 
   getAssetFullLocation,
+  getAssetUnitId,
+  isExactOrSafePrefixMatch,
   normalizeLoc
 } from './locationHelper';
 
@@ -13,6 +15,7 @@ export interface GenerateAspecPdfParams {
   sector: Sector | { 
     id: string; 
     nome: string; 
+    unidadeId?: string;
     responsavel?: string; 
     responsavelNome?: string; 
     responsavelCargo?: string;
@@ -37,49 +40,77 @@ export interface AspecRoomAuditStats {
   totalAspec: number;
   confirmedCount: number;
   missingCount: number;
+  unconfirmedCount: number;
   findingsCount: number;
   aspecRegisteredAssets: Asset[];
   confirmedPresent: Asset[];
   markedMissing: Asset[];
+  unconfirmedPending: Asset[];
   physicalFindingsInRoom: Asset[];
 }
 
 export function computeRoomAuditStats(
   sector: GenerateAspecPdfParams['sector'],
-  assets: Asset[]
+  assets: Asset[],
+  unit?: { id: string; nome: string; sigla: string }
 ): AspecRoomAuditStats {
   const sectorName = sector?.nome || 'Sala';
+  const targetUnitId = (sector && 'unidadeId' in sector ? (sector as any).unidadeId : '') || unit?.id || '';
 
-  // 1. Bens cadastrados oficialmente no ASPEC para esta sala
+  // 1. Bens cadastrados oficialmente no ASPEC para esta sala e nesta unidade
   const aspecRegisteredAssets = assets.filter(a => {
     if (a.foraDoAspec) return false;
+    if (targetUnitId) {
+      const uId = getAssetUnitId(a);
+      if (uId && uId !== targetUnitId) return false;
+    }
     return doesAssetOfficiallyMatchRoom(a, sectorName);
   });
 
-  // 1.1 Bens confirmados presentes (OK)
+  // 1.1 Bens confirmados presentes (OK) - Estritamente os que foram selecionados/conferidos pelo usuário
   const confirmedPresent = aspecRegisteredAssets.filter(
     a => a.auditoria?.conferido && a.auditoria?.statusDivergencia !== 'nao_encontrado'
   );
 
-  // 1.2 Bens marcados como não encontrados nesta sala (X)
+  // 1.2 Bens marcados expressamente como não encontrados nesta sala (X)
   const markedMissing = aspecRegisteredAssets.filter(
     a => a.auditoria?.statusDivergencia === 'nao_encontrado'
   );
 
+  // 1.3 Bens cadastrados no ASPEC mas NÃO selecionados / NÃO conferidos na vistoria
+  const unconfirmedPending = aspecRegisteredAssets.filter(
+    a => !a.auditoria?.conferido && a.auditoria?.statusDivergencia !== 'nao_encontrado'
+  );
+
   // 2. Bens encontrados fisicamente nesta sala mas com lotação anterior em outro lugar ou fora do ASPEC
+  // ESTRITAMENTE bens que o usuário efetivamente CONFERIU/SELECIONOU nesta sala
   const physicalFindingsInRoom = assets.filter(a => {
+    if (!a.auditoria?.conferido) return false;
     const isMissing = a.auditoria?.statusDivergencia === 'nao_encontrado';
     if (isMissing) return false;
 
-    const isAuditedHere = doesAssetPhysicallyMatchRoom(a, sectorName);
-    const isOriginallyHere = doesAssetOfficiallyMatchRoom(a, sectorName);
+    const audSub = a.auditoria?.subsetorEncontrado || a.auditoria?.setorEncontrado;
+    if (!audSub) return false;
 
-    if (a.foraDoAspec && isAuditedHere) return true;
-    if (isAuditedHere && !isOriginallyHere) return true;
+    const audNorm = normalizeLoc(audSub);
+    const target = normalizeLoc(sectorName);
+    const isAuditedHere = audNorm === target || isExactOrSafePrefixMatch(audNorm, target);
+    if (!isAuditedHere) return false;
+
+    const isOriginallyHere = doesAssetOfficiallyMatchRoom(a, sectorName);
+    if (a.foraDoAspec) return true;
+    if (!isOriginallyHere) return true;
     return false;
   });
 
-  const isRoomAllOk = markedMissing.length === 0 && physicalFindingsInRoom.length === 0 && aspecRegisteredAssets.length > 0;
+  // A sala só é 100% regular se TODOS os bens do ASPEC foram selecionados/conferidos,
+  // sem nenhum bem ausente, sem nenhum bem pendente/não selecionado e sem bens de outras salas.
+  const isRoomAllOk = 
+    aspecRegisteredAssets.length > 0 &&
+    confirmedPresent.length === aspecRegisteredAssets.length &&
+    unconfirmedPending.length === 0 &&
+    markedMissing.length === 0 &&
+    physicalFindingsInRoom.length === 0;
 
   return {
     sectorName,
@@ -87,10 +118,12 @@ export function computeRoomAuditStats(
     totalAspec: aspecRegisteredAssets.length,
     confirmedCount: confirmedPresent.length,
     missingCount: markedMissing.length,
+    unconfirmedCount: unconfirmedPending.length,
     findingsCount: physicalFindingsInRoom.length,
     aspecRegisteredAssets,
     confirmedPresent,
     markedMissing,
+    unconfirmedPending,
     physicalFindingsInRoom
   };
 }
@@ -106,7 +139,7 @@ export function downloadAspecRoomPdf({
   currentProfile,
   leaderChange
 }: GenerateAspecPdfParams): { filename: string; isAllOk: boolean } {
-  const stats = computeRoomAuditStats(sector, assets);
+  const stats = computeRoomAuditStats(sector, assets, unit);
   const now = new Date();
   const dateStr = now.toLocaleDateString('pt-BR');
   const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -356,10 +389,17 @@ export function downloadAspecRoomPdf({
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   doc.setTextColor(153, 27, 27);
-  doc.text(`SAÍDAS / AUSENTES: ${stats.missingCount}`, card3X + cardW / 2, currentY + 4.5, { align: 'center' });
+  doc.text(`NÃO LOCALIZADOS: ${stats.missingCount}`, card3X + cardW / 2, currentY + 4.5, { align: 'center' });
   doc.setFontSize(6.5);
   doc.setFont('helvetica', 'normal');
-  doc.text('Não encontrados aqui (apuração)', card3X + cardW / 2, currentY + 8.5, { align: 'center' });
+  doc.text(
+    stats.missingCount > 0 
+      ? `${stats.missingCount} marcado(s) ausente(s)` 
+      : (stats.unconfirmedCount > 0 ? `${stats.unconfirmedCount} pendente(s) no ASPEC` : 'Nenhuma ausência'), 
+    card3X + cardW / 2, 
+    currentY + 8.5, 
+    { align: 'center' }
+  );
 
   currentY += 15;
 
@@ -403,9 +443,9 @@ export function downloadAspecRoomPdf({
     return a.responsavelNome || a.auditoria?.responsavelConferencia || sectorResponsavel || '—';
   };
 
-  // IF ROOM HAS DIVERGENCES:
+  // IF ROOM HAS DIVERGENCES OR MOVEMENTS:
   if (!stats.isRoomAllOk) {
-    // TABLE 1: ENTRADAS / BENS ENCONTRADOS NESTA SALA
+    // TABLE 1: ENTRADAS / BENS ENCONTRADOS NESTA SALA (APENAS CONFERIDOS IN LOCO)
     if (stats.physicalFindingsInRoom.length > 0) {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8.5);
@@ -463,9 +503,9 @@ export function downloadAspecRoomPdf({
       currentY = (doc as any).lastAutoTable.finalY + 6;
     }
 
-    // TABLE 2: SAÍDAS / BENS COM X NÃO ENCONTRADOS
+    // TABLE 2: APENAS BENS MARCADOS COMO AUSENTES / NÃO LOCALIZADOS PELO VISTORIADOR
+    // (Bens não selecionados NÃO entram na tabela do PDF)
     if (stats.markedMissing.length > 0) {
-      // Check if page needs break
       if (currentY > 230) {
         doc.addPage();
         currentY = 15;
@@ -474,7 +514,7 @@ export function downloadAspecRoomPdf({
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8.5);
       doc.setTextColor(153, 27, 27); // red-800
-      doc.text(`2. SAÍDAS / NÃO ENCONTRADOS NESTA SALA (${stats.markedMissing.length} itens) — Constavam no ASPEC mas não vistos aqui`, 10, currentY);
+      doc.text(`2. BENS NÃO LOCALIZADOS NESTA SALA (${stats.markedMissing.length} itens) — Marcados como ausentes na conferência`, 10, currentY);
       currentY += 2;
 
       const missingData = stats.markedMissing.map(a => [
@@ -483,12 +523,12 @@ export function downloadAspecRoomPdf({
         a.descricao,
         stats.sectorName,
         getAssetResponsible(a),
-        '[EM APURAÇÃO / AGUARDAR DEMAIS SALAS]\nNão dar baixa imediata. Se localizado em outra sala, o sistema transitará.'
+        '[NÃO LOCALIZADO NO SETOR]\nMarcado como ausente na sala (em apuração contábil)'
       ]);
 
       autoTable(doc, {
         startY: currentY,
-        head: [['Tombo', 'SESA', 'Descrição do Bem', 'Lotação Original', 'Responsável', 'Ação no ASPEC']],
+        head: [['Tombo', 'SESA', 'Descrição do Bem', 'Lotação Original', 'Responsável', 'Situação na Vistoria']],
         body: missingData,
         theme: 'grid',
         headStyles: {
@@ -517,7 +557,7 @@ export function downloadAspecRoomPdf({
     }
   }
 
-  // TABLE 3: BENS CONFORMES / PRESENTES NO LOCAL
+  // TABLE 3: BENS CONFERIDOS E PRESENTES NESTA SALA (ESTRITAMENTE OS QUE O USUÁRIO SELECIONOU/CONFERIU)
   if (currentY > 220) {
     doc.addPage();
     currentY = 15;
@@ -528,14 +568,14 @@ export function downloadAspecRoomPdf({
   doc.setTextColor(22, 101, 52); // green-800
   doc.text(
     stats.isRoomAllOk
-      ? `RELAÇÃO DE TODOS OS BENS CONFORMES E LOCALIZADOS NESTA SALA (${stats.aspecRegisteredAssets.length} itens)`
-      : `3. BENS MANTIDOS E CONFORMES NESTA SALA (${stats.confirmedPresent.length} itens) — Dispensa alteração no ASPEC`,
+      ? `RELAÇÃO DOS BENS CONFERIDOS E CONFIRMADOS NA SALA (${stats.confirmedPresent.length} itens) — 100% REGULAR`
+      : `RELAÇÃO DOS BENS CONFERIDOS E SELECIONADOS NA VISTORIA (${stats.confirmedPresent.length} itens) — Presença física confirmada`,
     10,
     currentY
   );
   currentY += 2;
 
-  const presentList = stats.isRoomAllOk ? stats.aspecRegisteredAssets : stats.confirmedPresent;
+  const presentList = stats.confirmedPresent;
   const presentData = presentList.map(a => [
     a.tombamento,
     a.tomboOrigemSesa || '—',

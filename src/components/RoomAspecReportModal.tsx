@@ -17,7 +17,7 @@ import {
   FileText,
   ShieldCheck
 } from 'lucide-react';
-import { doesAssetMatchRoom, doesAssetOfficiallyMatchRoom, doesAssetPhysicallyMatchRoom, getAssetFullLocation, getAssetOfficialRoomName, normalizeLoc } from '../utils/locationHelper';
+import { doesAssetMatchRoom, doesAssetOfficiallyMatchRoom, doesAssetPhysicallyMatchRoom, getAssetFullLocation, getAssetOfficialRoomName, getAssetUnitId, isExactOrSafePrefixMatch, normalizeLoc } from '../utils/locationHelper';
 import { downloadAspecRoomPdf } from '../utils/aspecPdfGenerator';
 
 interface RoomAspecReportModalProps {
@@ -68,14 +68,16 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
   const sectorCargo = leaderChangeInfo?.newCargo || ((sector && 'responsavelCargo' in sector) ? sector.responsavelCargo : 'Responsável pelo Setor');
   const sectorNameNormalized = sector?.nome ? sector.nome.trim().toLowerCase() : '';
 
-  // 1. Bens que estavam cadastrados no ASPEC nesta sala / subárea
+  // 1. Bens que estavam cadastrados no ASPEC nesta sala / subárea e nesta unidade
   const aspecRegisteredAssets = useMemo(() => {
     if (!sector) return [];
+    const targetUnitId = (sector && 'unidadeId' in sector ? (sector as any).unidadeId : '') || unit?.id || '';
     return assets.filter(a => {
       if (a.foraDoAspec) return false;
+      if (targetUnitId && getAssetUnitId(a) !== targetUnitId) return false;
       return doesAssetOfficiallyMatchRoom(a, sectorName);
     });
-  }, [assets, sectorName]);
+  }, [assets, sectorName, sector, unit]);
 
   // 1.1 Bens confirmados presentes (com OK)
   const confirmedPresent = useMemo(() => {
@@ -88,22 +90,40 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
   }, [aspecRegisteredAssets]);
 
   // 2. Bens que foram achados fisicamente nesta sala mas estavam no ASPEC em outro lugar (ou fora do ASPEC)
+  // ESTRITAMENTE bens que o usuário efetivamente CONFERIU/SELECIONOU nesta sala
   const physicalFindingsInRoom = useMemo(() => {
     return assets.filter(a => {
+      if (!a.auditoria?.conferido) return false;
       const isMissing = a.auditoria?.statusDivergencia === 'nao_encontrado';
       if (isMissing) return false;
 
-      const isAuditedHere = doesAssetPhysicallyMatchRoom(a, sectorName);
-      const isOriginallyHere = doesAssetOfficiallyMatchRoom(a, sectorName);
+      const audSub = a.auditoria?.subsetorEncontrado || a.auditoria?.setorEncontrado;
+      if (!audSub) return false;
 
-      if (a.foraDoAspec && isAuditedHere) return true;
-      if (isAuditedHere && !isOriginallyHere) return true;
+      const audNorm = normalizeLoc(audSub);
+      const target = normalizeLoc(sectorName);
+      const isAuditedHere = audNorm === target || isExactOrSafePrefixMatch(audNorm, target);
+      if (!isAuditedHere) return false;
+
+      const isOriginallyHere = doesAssetOfficiallyMatchRoom(a, sectorName);
+      if (a.foraDoAspec) return true;
+      if (!isOriginallyHere) return true;
       return false;
     });
   }, [assets, sectorName]);
 
+  // 1.3 Bens que constavam no ASPEC mas NÃO foram selecionados/conferidos na vistoria
+  const unconfirmedPending = useMemo(() => {
+    return aspecRegisteredAssets.filter(a => !a.auditoria?.conferido && a.auditoria?.statusDivergencia !== 'nao_encontrado');
+  }, [aspecRegisteredAssets]);
+
   // Validação: Sala 100% OK e conforme com o ASPEC?
-  const isRoomAllOk = markedMissing.length === 0 && physicalFindingsInRoom.length === 0 && aspecRegisteredAssets.length > 0;
+  const isRoomAllOk = 
+    aspecRegisteredAssets.length > 0 &&
+    confirmedPresent.length === aspecRegisteredAssets.length &&
+    unconfirmedPending.length === 0 &&
+    markedMissing.length === 0 &&
+    physicalFindingsInRoom.length === 0;
 
   // Bens sem plaqueta encontrados na sala
   const semPlaquetaItems = useMemo(() => {
@@ -203,7 +223,7 @@ export const RoomAspecReportModal: React.FC<RoomAspecReportModalProps> = ({
       </tr>
     </thead>
     <tbody>
-      ${aspecRegisteredAssets.map(a => `
+      ${confirmedPresent.map(a => `
         <tr>
           <td style="font-family: monospace; font-weight: bold;">${a.tombamento}</td>
           <td style="font-family: monospace; color: #1d4ed8;">${a.tomboOrigemSesa || '—'}</td>
