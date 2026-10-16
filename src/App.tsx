@@ -315,28 +315,52 @@ export default function App() {
         const isExplicitlyCleared = localStorage.getItem('patrimonio_cpsms_explicitly_cleared') === 'true';
 
         let effectiveAssets = loadedAssets;
+
+        // 1. Identifica e lê todos os IDs de bens que estão na lixeira para NUNCA permitir que reapareçam no mapa ou no acervo ativo
+        let currentTrashIds = new Set<string>();
+        try {
+          const savedTrash = localStorage.getItem('cpsms_trash_assets');
+          if (savedTrash) {
+            const parsed = JSON.parse(savedTrash);
+            if (Array.isArray(parsed)) {
+              parsed.forEach((t: TrashedAsset) => {
+                if (t?.asset?.id) currentTrashIds.add(t.asset.id);
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('Erro ao ler lixeira no startup:', e);
+        }
+
         if (isExplicitlyCleared && (!loadedAssets || loadedAssets.length === 0)) {
           effectiveAssets = [];
         } else if (!isCleanResetDone) {
           // RESET CLEAN SLATE: Start completely pending with genuine assets (zero fake conferences)
-          effectiveAssets = INITIAL_ASSETS.map(a => ({
-            ...a,
-            auditoria: {
-              conferido: false
-            }
-          }));
+          effectiveAssets = INITIAL_ASSETS
+            .filter(a => !currentTrashIds.has(a.id))
+            .map(a => ({
+              ...a,
+              auditoria: {
+                conferido: false
+              }
+            }));
           saveAssetsToDB(effectiveAssets).catch(console.warn);
           localStorage.setItem(CLEAN_RESET_KEY, 'done');
         } else if (!isExplicitlyCleared && (!effectiveAssets || effectiveAssets.length <= 1) && INITIAL_ASSETS.length > 1) {
-          effectiveAssets = INITIAL_ASSETS;
-          saveAssetsToDB(INITIAL_ASSETS).catch(console.warn);
+          effectiveAssets = INITIAL_ASSETS.filter(a => !currentTrashIds.has(a.id));
+          saveAssetsToDB(effectiveAssets).catch(console.warn);
         } else if (Array.isArray(effectiveAssets) && effectiveAssets.length > 1) {
-          // Garante que bens oficiais de novas salas sejam mesclados
+          // Garante que bens na lixeira sejam expurgados imediatamente se ainda constarem no IndexedDB
+          if (currentTrashIds.size > 0) {
+            effectiveAssets = effectiveAssets.filter(a => !currentTrashIds.has(a.id));
+          }
+          // Garante que bens oficiais de novas salas sejam mesclados, mas NUNCA ressuscita bens que estão na lixeira!
           const existingIds = new Set(effectiveAssets.map(a => a.id));
           const existingTombos = new Set(effectiveAssets.map(a => (a.tombamento || '').toString().trim()));
           const missingAssets = INITIAL_ASSETS.filter(a => {
             const tombo = (a.tombamento || '').toString().trim();
-            return !existingIds.has(a.id) && (!tombo || !existingTombos.has(tombo));
+            const isTrashed = currentTrashIds.has(a.id);
+            return !isTrashed && !existingIds.has(a.id) && (!tombo || !existingTombos.has(tombo));
           });
           if (missingAssets.length > 0) {
             effectiveAssets = [...effectiveAssets, ...missingAssets];
@@ -351,6 +375,11 @@ export default function App() {
         // Sync trashed assets from Firestore
         fetchAllTrashedAssetsFromFirestore().then(cloudTrash => {
           if (cloudTrash && cloudTrash.length > 0) {
+            const cloudTrashIds = new Set<string>();
+            cloudTrash.forEach(t => {
+              if (t?.asset?.id) cloudTrashIds.add(t.asset.id);
+            });
+
             setTrashAssets(prev => {
               const map = new Map<string, TrashedAsset>();
               prev.forEach(t => map.set(t.asset.id, t));
@@ -363,6 +392,20 @@ export default function App() {
                 console.warn(e);
               }
               return valid;
+            });
+
+            // Se qualquer bem na lixeira da nuvem ainda constar no acervo ativo, remove imediatamente!
+            setAssets(prev => {
+              const filtered = prev.filter(a => !cloudTrashIds.has(a.id));
+              if (filtered.length !== prev.length) {
+                saveAssetsToDB(filtered).catch(console.warn);
+              }
+              return filtered;
+            });
+
+            // Remove da coleção ativa de assets do Firestore
+            cloudTrashIds.forEach(id => {
+              deleteAssetFromFirestore(id).catch(() => {});
             });
           }
         }).catch(e => console.warn('Cloud trash fetch error:', e));
@@ -418,7 +461,32 @@ export default function App() {
             return;
           }
           if (cloudAssets && cloudAssets.length > 0) {
-            const { uniqueAssets } = deduplicateAssetsList(cloudAssets);
+            // Obtém os IDs da lixeira atual para que o listener da nuvem NUNCA ressuscite bens apagados
+            const activeTrashIds = new Set<string>();
+            try {
+              const savedTrash = localStorage.getItem('cpsms_trash_assets');
+              if (savedTrash) {
+                const parsed = JSON.parse(savedTrash);
+                if (Array.isArray(parsed)) {
+                  parsed.forEach((t: TrashedAsset) => {
+                    if (t?.asset?.id) activeTrashIds.add(t.asset.id);
+                  });
+                }
+              }
+            } catch (e) {
+              // ignore
+            }
+
+            // Filtra os bens que estão na lixeira e garante exclusão definitiva do Firestore
+            const nonTrashedCloudAssets = cloudAssets.filter(a => {
+              if (activeTrashIds.has(a.id)) {
+                deleteAssetFromFirestore(a.id).catch(() => {});
+                return false;
+              }
+              return true;
+            });
+
+            const { uniqueAssets } = deduplicateAssetsList(nonTrashedCloudAssets);
             setAssets(uniqueAssets);
             saveAssetsToDB(uniqueAssets);
           } else if (!initialAssetsCheckDone && localAssets.length > 0) {
@@ -1288,31 +1356,10 @@ export default function App() {
       // 2. Desduplica bens patrimoniais preservando conferências
       const { uniqueAssets, removedCount: assetsRemoved } = deduplicateAssetsList(assets);
 
-      // 3. Detecta e restaura bens na lixeira apagados por engano de duplicidade de sala
-      const falseDuplicates = findFalseDuplicateTrashedAssets(uniqueAssets, trashAssets);
-      let assetsRestored = 0;
-      let finalAssets = uniqueAssets;
-
-      if (falseDuplicates.length > 0) {
-        const falseIds = new Set(falseDuplicates.map(f => f.asset.id));
-        const restoredList = falseDuplicates.map(f => f.asset);
-        finalAssets = [...restoredList, ...uniqueAssets];
-        assetsRestored = falseDuplicates.length;
-
-        setTrashAssets(prev => {
-          const updated = prev.filter(t => !falseIds.has(t.asset.id));
-          try {
-            localStorage.setItem('cpsms_trash_assets', JSON.stringify(updated));
-          } catch (e) {
-            console.warn('Erro ao atualizar lixeira:', e);
-          }
-          return updated;
-        });
-
-        falseDuplicates.forEach(f => {
-          deleteTrashedAssetFromFirestore(f.asset.id).catch(e => console.warn('Firestore trash delete err:', e));
-        });
-      }
+      // 3. Garante que nenhum bem que está na lixeira seja mantido no acervo ativo
+      const trashedIdSet = new Set(trashAssets.map(t => t.asset.id));
+      const finalAssets = uniqueAssets.filter(a => !trashedIdSet.has(a.id));
+      const assetsRestored = 0;
 
       // 4. Salva no IndexedDB
       await saveAssetsToDB(finalAssets);
@@ -1335,6 +1382,39 @@ export default function App() {
       setIsProcessing(false);
       setLastQueryDurationMs(Math.max(5, Math.round(performance.now() - t0)));
     }
+  };
+
+  const handleRestoreFalseDuplicates = async (): Promise<number> => {
+    const falseDuplicates = findFalseDuplicateTrashedAssets(assets, trashAssets);
+    if (falseDuplicates.length === 0) return 0;
+    const restoredIds = new Set(falseDuplicates.map(f => f.asset.id));
+    const restoredList = falseDuplicates.map(f => f.asset);
+
+    setTrashAssets(prev => {
+      const updated = prev.filter(t => !restoredIds.has(t.asset.id));
+      try {
+        localStorage.setItem('cpsms_trash_assets', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Erro ao atualizar lixeira:', e);
+      }
+      return updated;
+    });
+
+    falseDuplicates.forEach(f => {
+      deleteTrashedAssetFromFirestore(f.asset.id).catch(e => console.warn('Firestore trash delete err:', e));
+    });
+
+    setAssets(prev => {
+      const updated = [...restoredList, ...prev.filter(a => !restoredIds.has(a.id))];
+      saveAssetsToDB(updated).catch(console.warn);
+      return updated;
+    });
+
+    for (const item of restoredList) {
+      saveAssetToFirestore(item).catch(console.warn);
+    }
+
+    return falseDuplicates.length;
   };
 
   const handleDeduplicateAssets = async () => {
@@ -1508,6 +1588,8 @@ export default function App() {
             onConcludeRoom={handleConcludeRoom}
             onAddNewLocation={handleAddNewLocation}
             onDeleteSector={handleDeleteSector}
+            trashAssets={trashAssets}
+            trashSectors={trashSectors}
           />
         )}
 
@@ -1627,6 +1709,7 @@ export default function App() {
             onPermanentlyDeleteSector={handlePermanentlyDeleteSector}
             onPurgeExpiredTrash={handlePurgeExpiredTrash}
             onExecuteDeduplicationRule={handleExecuteDeduplicationRule}
+            onRestoreFalseDuplicates={handleRestoreFalseDuplicates}
           />
         )}
 

@@ -27,6 +27,7 @@ interface TrashViewProps {
   onPermanentlyDeleteSector: (sectorId: string) => void;
   onPurgeExpiredTrash: () => void;
   onExecuteDeduplicationRule?: () => Promise<{ assetsRemoved: number; sectorsMerged: number; assetsRestored: number } | void> | void;
+  onRestoreFalseDuplicates?: () => Promise<number | void> | void;
 }
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -42,6 +43,7 @@ export const TrashView: React.FC<TrashViewProps> = ({
   onPermanentlyDeleteSector,
   onPurgeExpiredTrash,
   onExecuteDeduplicationRule,
+  onRestoreFalseDuplicates,
 }) => {
   const [filterType, setFilterType] = useState<'all' | 'assets' | 'sectors'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -208,14 +210,18 @@ export const TrashView: React.FC<TrashViewProps> = ({
               </p>
             </div>
           </div>
-          {onExecuteDeduplicationRule && (
+          {(onRestoreFalseDuplicates || onExecuteDeduplicationRule) && (
             <button
               type="button"
               disabled={isExecutingDedup}
               onClick={async () => {
                 setIsExecutingDedup(true);
                 try {
-                  await onExecuteDeduplicationRule();
+                  if (onRestoreFalseDuplicates) {
+                    await onRestoreFalseDuplicates();
+                  } else if (onExecuteDeduplicationRule) {
+                    await onExecuteDeduplicationRule();
+                  }
                 } finally {
                   setIsExecutingDedup(false);
                 }

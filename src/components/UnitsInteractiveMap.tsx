@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Asset, Sector, UnitInfo, UserProfile } from '../types';
+import { Asset, Sector, UnitInfo, UserProfile, TrashedAsset, TrashedSector } from '../types';
 import { formatBRL, formatDate } from '../utils/formatters';
 import { 
   Building2, 
@@ -25,7 +25,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { NewLocationModal } from './NewLocationModal';
-import { buildUnitSubareas, getAssetUnitId } from '../utils/locationHelper';
+import { buildUnitSubareas, getAssetUnitId, normalizeLoc } from '../utils/locationHelper';
 import { downloadAspecRoomPdf } from '../utils/aspecPdfGenerator';
 
 interface UnitsInteractiveMapProps {
@@ -37,6 +37,8 @@ interface UnitsInteractiveMapProps {
   onConcludeRoom: (sectorIdOrName: string) => void;
   onAddNewLocation: (newSector: Sector) => void;
   onDeleteSector?: (sectorIdOrName: string, reason?: string) => void;
+  trashAssets?: TrashedAsset[];
+  trashSectors?: TrashedSector[];
 }
 
 export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
@@ -48,6 +50,8 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
   onConcludeRoom,
   onAddNewLocation,
   onDeleteSector,
+  trashAssets = [],
+  trashSectors = [],
 }) => {
   const [selectedUnitId, setSelectedUnitId] = useState<string>('policlinica');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -60,14 +64,69 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
   const [sectorToDelete, setSectorToDelete] = useState<Sector | null>(null);
   const [deleteSectorReason, setDeleteSectorReason] = useState<string>('Sala duplicada ou criada por engano');
 
+  // Garante de forma blindada que nenhum bem na lixeira seja computado ou exibido no mapa
+  const activeAssets = useMemo(() => {
+    const trashedIds = new Set<string>();
+    if (trashAssets && trashAssets.length > 0) {
+      trashAssets.forEach(t => {
+        if (t?.asset?.id) trashedIds.add(t.asset.id);
+      });
+    }
+    try {
+      const savedTrash = localStorage.getItem('cpsms_trash_assets');
+      if (savedTrash) {
+        const parsed = JSON.parse(savedTrash);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((t: any) => {
+            if (t?.asset?.id) trashedIds.add(t.asset.id);
+          });
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    if (trashedIds.size === 0) return assets;
+    return assets.filter(a => !trashedIds.has(a.id));
+  }, [assets, trashAssets]);
+
+  // Garante de forma blindada que nenhuma sala na lixeira apareça no mapa
+  const activeSectors = useMemo(() => {
+    const trashedSecIds = new Set<string>();
+    const trashedSecNames = new Set<string>();
+    if (trashSectors && trashSectors.length > 0) {
+      trashSectors.forEach(t => {
+        if (t?.sector?.id) trashedSecIds.add(t.sector.id);
+        if (t?.sector?.nome) trashedSecNames.add(normalizeLoc(t.sector.nome));
+      });
+    }
+    try {
+      const savedTrashSectors = localStorage.getItem('cpsms_trash_sectors');
+      if (savedTrashSectors) {
+        const parsed = JSON.parse(savedTrashSectors);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((t: any) => {
+            if (t?.sector?.id) trashedSecIds.add(t.sector.id);
+            if (t?.sector?.nome) trashedSecNames.add(normalizeLoc(t.sector.nome));
+          });
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    if (trashedSecIds.size === 0 && trashedSecNames.size === 0) return sectors;
+    return sectors.filter(s => !trashedSecIds.has(s.id) && !trashedSecNames.has(normalizeLoc(s.nome)));
+  }, [sectors, trashSectors]);
+
   // Unidade Selecionada
   const activeUnit = units.find(u => u.id === selectedUnitId) || units[0];
 
   // Lista oficial e completa de SALAS / SUBÁREAS da Unidade com bens alocados
   // No ASPEC: Área = Unidade (ex: 004 - CEO Sobral) e Subárea = Sala (ex: 004 - COPA)
   const allSubareasWithStats = useMemo(() => {
-    return buildUnitSubareas(selectedUnitId as any, sectors, assets);
-  }, [selectedUnitId, sectors, assets]);
+    return buildUnitSubareas(selectedUnitId as any, activeSectors, activeAssets);
+  }, [selectedUnitId, activeSectors, activeAssets]);
 
   // Lista de salas filtrada para exibição (com controle de salas vazias)
   const sectorsWithStats = useMemo(() => {
@@ -154,14 +213,14 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
     onConcludeRoom(sectorId);
     
     // Baixar automaticamente o PDF oficial da sala
-    const targetSector = sectors.find(s => s.id === sectorId || s.nome.trim().toLowerCase() === sectorName.trim().toLowerCase());
+    const targetSector = activeSectors.find(s => s.id === sectorId || s.nome.trim().toLowerCase() === sectorName.trim().toLowerCase());
     const currentUnit = units.find(u => u.id === selectedUnitId) || units[0];
     let pdfRes: { filename: string; isAllOk: boolean } | null = null;
     try {
       pdfRes = downloadAspecRoomPdf({
         sector: targetSector || { id: sectorId, nome: sectorName },
         unit: currentUnit,
-        assets,
+        assets: activeAssets,
         currentProfile
       });
     } catch (e) {
@@ -232,7 +291,7 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {units.map((unit) => {
           const isSelected = selectedUnitId === unit.id;
-          const uRooms = buildUnitSubareas(unit.id as any, sectors, assets);
+          const uRooms = buildUnitSubareas(unit.id as any, activeSectors, activeAssets);
           const uConcluidas = uRooms.filter(s => s.visualStatus === 'concluida').length;
           const uPerc = uRooms.length > 0 ? Math.round((uConcluidas / uRooms.length) * 100) : 0;
 
