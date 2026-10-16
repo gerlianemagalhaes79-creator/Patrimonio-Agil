@@ -421,8 +421,8 @@ export function buildUnitSubareas(
   percent: number;
   visualStatus: 'concluida' | 'em_andamento' | 'pendente' | 'divergencia';
 })[] {
-  // Bens que pertencem a esta Unidade (Área no ASPEC)
-  const unitAssets = assets.filter(a => getAssetUnitId(a) === unitId);
+  // Bens ativos que pertencem a esta Unidade (exclui bens baixados/devolvidos/doados do inventário físico da sala)
+  const unitAssets = assets.filter(a => getAssetUnitId(a) === unitId && (!a.statusSaida || a.statusSaida === 'ativo'));
   const baseSectors = sectors.filter(s => s.unidadeId === unitId);
 
   // Mapa persistente de salas revisadas / conferidas

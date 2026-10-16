@@ -14,7 +14,8 @@ import {
   AssetCondition,
   TrashedAsset,
   TrashedSector,
-  AssetExit
+  AssetExit,
+  ExitLinkedAsset
 } from './types';
 import { 
   CPSMS_SECTORS, 
@@ -50,6 +51,7 @@ import {
   batchReplaceAssetsInFirestore,
   saveTransferToFirestore,
   saveTermToFirestore,
+  deleteTermFromFirestore,
   deleteAssetFromFirestore,
   saveTrashedAssetToFirestore,
   deleteTrashedAssetFromFirestore,
@@ -890,16 +892,40 @@ export default function App() {
   // ==========================================
   // SAÍDAS PATRIMONIAIS (DEVOLUÇÃO & DOAÇÃO)
   // ==========================================
-  const handleCreateExit = (newExitData: Omit<AssetExit, 'id' | 'dataRegistro' | 'status'>) => {
+  const handleCreateExit = (newExitData: Omit<AssetExit, 'id' | 'dataRegistro' | 'status'> & { bens?: ExitLinkedAsset[] }) => {
     const exitId = `exit-${Date.now()}`;
+    const termNumber = `TB-CPSMS-${new Date().getFullYear()}/${String(terms.length + 1).padStart(4, '0')}`;
+
+    // Obtém a lista completa de bens vinculados a esta saída
+    const linkedBens: ExitLinkedAsset[] = (newExitData.bens && newExitData.bens.length > 0)
+      ? newExitData.bens
+      : [{
+          assetId: newExitData.assetId,
+          tombamento: newExitData.assetTombamento,
+          tomboOrigemSesa: newExitData.assetTomboOrigemSesa,
+          descricao: newExitData.assetDescricao,
+          valor: newExitData.assetValor || 0,
+          origemTombo: newExitData.assetOrigemTombo,
+          unidadeOrigem: newExitData.assetUnidadeOrigem,
+          setorOrigem: newExitData.assetSetorOrigem,
+        }];
+
+    const linkedAssetIds = new Set(linkedBens.map(b => b.assetId).filter(Boolean));
+    const linkedTombos = new Set(linkedBens.map(b => (b.tombamento || '').toString().trim()).filter(Boolean));
+
+    const totalValor = linkedBens.reduce((sum, b) => sum + (b.valor || 0), 0);
+
     const newExit: AssetExit = {
       ...newExitData,
       id: exitId,
+      termoGeradoId: termNumber,
+      assetValor: totalValor > 0 ? totalValor : newExitData.assetValor,
       dataRegistro: new Date().toISOString(),
       status: 'concluida',
+      bens: linkedBens,
     };
 
-    // 1. Salva saída
+    // 1. Salva saída na lista de saídas e no Firestore
     setExits(prev => {
       const updated = [newExit, ...prev];
       try {
@@ -911,13 +937,58 @@ export default function App() {
     });
     saveExitToFirestore(newExit).catch(e => console.warn('Firestore exit save err:', e));
 
-    // 2. Atualiza o bem no inventário com a baixa/saída registrada
+    // 2. Gera Termo Oficial Geral de Baixa / Saída integrado à aba de Termos
+    const exitTermTitle = newExit.tipoSaida === 'devolucao'
+      ? `Termo Oficial de Devolução a Cedente – ${newExit.destinatario}`
+      : `Termo Oficial de Doação de Bens – ${newExit.destinatario}`;
+
+    const newTerm: ResponsibilityTerm = {
+      id: termNumber,
+      numeroTermo: termNumber,
+      tipo: 'termo_baixa',
+      titulo: exitTermTitle,
+      dataEmissao: newExit.dataSaida || new Date().toISOString().slice(0, 10),
+      unidadeOrigem: newExit.assetUnidadeOrigem,
+      setorOrigem: newExit.assetSetorOrigem,
+      unidadeDestino: newExit.destinatario,
+      setorDestino: newExit.destinatarioResponsavel || 'Órgão Externo / Recebedor',
+      responsavelNome: newExit.destinatarioResponsavel || newExit.destinatario,
+      responsavelCargo: newExit.destinatarioCargo || 'Representante Legal do Órgão',
+      responsavelMatricula: newExit.destinatarioDocumento || 'Externo / SESA / UFC / Favorecido',
+      gestoraNome: currentProfile.nome || 'Gestora de Patrimônio',
+      gestoraCargo: 'Gestora de Patrimônio – CPSMS',
+      bens: linkedBens.map(b => ({
+        tombamento: b.tombamento,
+        origemTombo: b.origemTombo,
+        descricao: b.descricao,
+        estado: (b.estado as any) || 'Bom',
+        valor: b.valor || 0,
+        numeroSerie: b.numeroSerie,
+      })),
+      observacoesLegais: `Documento comprobatório emitido pelo Sistema de Patrimônio CPSMS referente ao Processo/Ofício nº ${newExit.numeroProcesso}. Motivo: ${newExit.motivo}. Autorizada a baixa definitiva no sistema ARESPEC / ASPEC pelo CPSMS.`,
+      codigoVerificacao: `AUT-BAIXA-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
+      statusAssinatura: 'assinado'
+    };
+
+    setTerms(prev => {
+      const updatedTerms = [newTerm, ...prev.filter(t => t.id !== termNumber)];
+      saveTermsToDB(updatedTerms).catch(console.warn);
+      return updatedTerms;
+    });
+    saveTermToFirestore(newTerm).catch(e => console.warn('Firestore term save err:', e));
+
+    // 3. Atualiza TODOS os bens vinculados no inventário, gravando o status de saída, destino e mantendo histórico do local anterior
     setAssets(prev => {
       const updated = prev.map(a => {
-        if (a.id === newExit.assetId) {
+        const tombo = (a.tombamento || '').toString().trim();
+        const matchesLinked = linkedAssetIds.has(a.id) || (tombo && linkedTombos.has(tombo));
+
+        if (matchesLinked) {
           const updatedAsset: Asset = {
             ...a,
             statusSaida: newExit.tipoSaida === 'devolucao' ? 'devolvido' : 'doado',
+            setorOriginalAspec: a.setorOriginalAspec || a.setorNome,
+            unidadeOriginalAspec: a.unidadeOriginalAspec || a.unidadeNome,
             detalhesSaida: {
               tipo: newExit.tipoSaida,
               destinatario: newExit.destinatario,
@@ -925,12 +996,15 @@ export default function App() {
               dataSaida: newExit.dataSaida,
               responsavelDestino: newExit.destinatarioResponsavel,
               motivo: newExit.motivo,
+              setorOrigemAnterior: a.setorNome,
+              unidadeOrigemAnterior: a.unidadeNome,
+              termoGeradoId: termNumber,
             },
             auditoria: {
               ...a.auditoria,
               conferido: true,
               statusDivergencia: 'conforme',
-              observacaoAuditoria: `[SAÍDA REGISTRADA - ${newExit.tipoSaida.toUpperCase()}] ${newExit.motivo}. Destinatário: ${newExit.destinatario}. Processo: ${newExit.numeroProcesso}.`,
+              observacaoAuditoria: `[BAIXA REGISTRADA - ${newExit.tipoSaida === 'devolucao' ? 'DEVOLUÇÃO A CEDENTE' : 'DOAÇÃO FORMALIZADA'}] Destino: ${newExit.destinatario}. Processo: ${newExit.numeroProcesso} (${newExit.dataSaida}). Origem anterior: ${a.unidadeNome} — ${a.setorNome}. Motivo: ${newExit.motivo}. Termo: ${termNumber}.`,
             }
           };
           saveAssetToFirestore(updatedAsset).catch(e => console.warn('Firestore asset exit update err:', e));
@@ -947,7 +1021,24 @@ export default function App() {
     const exitItem = exits.find(e => e.id === exitId);
     if (!exitItem) return;
 
-    // 1. Remove saída
+    // Obtém todos os IDs de bens da saída
+    const affectedAssetIds = new Set<string>();
+    if (exitItem.bens && exitItem.bens.length > 0) {
+      exitItem.bens.forEach(b => {
+        if (b.assetId) affectedAssetIds.add(b.assetId);
+      });
+    }
+    if (exitItem.assetId) affectedAssetIds.add(exitItem.assetId);
+
+    const affectedTombos = new Set<string>();
+    if (exitItem.bens && exitItem.bens.length > 0) {
+      exitItem.bens.forEach(b => {
+        if (b.tombamento) affectedTombos.add(b.tombamento.toString().trim());
+      });
+    }
+    if (exitItem.assetTombamento) affectedTombos.add(exitItem.assetTombamento.toString().trim());
+
+    // 1. Remove saída da lista e do Firestore
     setExits(prev => {
       const updated = prev.filter(e => e.id !== exitId);
       try {
@@ -959,10 +1050,23 @@ export default function App() {
     });
     deleteExitFromFirestore(exitId).catch(e => console.warn('Firestore exit delete err:', e));
 
-    // 2. Reativa o bem no inventário
+    // 2. Remove o termo de baixa correspondente, se houver
+    if (exitItem.termoGeradoId) {
+      setTerms(prev => {
+        const updated = prev.filter(t => t.id !== exitItem.termoGeradoId && t.numeroTermo !== exitItem.termoGeradoId);
+        saveTermsToDB(updated).catch(console.warn);
+        return updated;
+      });
+      deleteTermFromFirestore(exitItem.termoGeradoId).catch(() => {});
+    }
+
+    // 3. Reativa TODOS os bens no inventário
     setAssets(prev => {
       const updated = prev.map(a => {
-        if (a.id === exitItem.assetId) {
+        const tombo = (a.tombamento || '').toString().trim();
+        const isAffected = affectedAssetIds.has(a.id) || (tombo && affectedTombos.has(tombo));
+
+        if (isAffected) {
           const reativado: Asset = {
             ...a,
             statusSaida: 'ativo',

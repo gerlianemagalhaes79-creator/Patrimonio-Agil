@@ -144,6 +144,11 @@ export async function saveTermToFirestore(term: ResponsibilityTerm): Promise<voi
   await setDoc(ref, term, { merge: true });
 }
 
+export async function deleteTermFromFirestore(termId: string): Promise<void> {
+  const ref = doc(db, 'terms', termId);
+  await deleteDoc(ref);
+}
+
 /**
  * Fetch all assets from Firestore once
  */
@@ -213,7 +218,8 @@ export async function fetchAllTrashedAssetsFromFirestore(): Promise<TrashedAsset
 
 export async function saveExitToFirestore(item: AssetExit): Promise<void> {
   const ref = doc(db, 'asset_exits', item.id);
-  await setDoc(ref, item);
+  const cleanItem = sanitizeFirestoreData(item);
+  await setDoc(ref, cleanItem, { merge: true });
 }
 
 export async function deleteExitFromFirestore(exitId: string): Promise<void> {

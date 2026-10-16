@@ -447,8 +447,8 @@ export const AuditView: React.FC<AuditViewProps> = ({
 
   const activeSectorAssets = useMemo(() => {
     if (!activeSector) return [];
-    // Filtra estritamente os bens alocados na Subárea selecionada
-    let list = unitAssets.filter(a => doesAssetMatchRoom(a, activeSector.nome));
+    // Filtra estritamente os bens ativos alocados na Subárea selecionada (exclui bens baixados/devolvidos/doados)
+    let list = unitAssets.filter(a => (!a.statusSaida || a.statusSaida === 'ativo') && doesAssetMatchRoom(a, activeSector.nome));
 
     if (roomStatusFilter === 'pendentes') {
       list = list.filter(a => !a.auditoria?.conferido);
@@ -1385,6 +1385,20 @@ export const AuditView: React.FC<AuditViewProps> = ({
       setForeignTomboFeedback({
         type: 'not_in_aspec',
         message: `O Tombo "${foreignTomboInput.trim()}" NÃO consta no ASPEC. Trata-se de um bem físico sem registro contábil.`
+      });
+      return;
+    }
+
+    // Se o bem já teve saída/baixa registrada (Devolução ou Doação), avisa claramente o usuário com o destino!
+    if (matched.statusSaida && matched.statusSaida !== 'ativo') {
+      const tipoLabel = matched.statusSaida === 'devolvido' ? 'DEVOLUÇÃO A CEDENTE' : 'DOAÇÃO FORMALIZADA';
+      const dest = matched.detalhesSaida?.destinatario || 'Órgão Externo';
+      const proc = matched.detalhesSaida?.processo || '—';
+      const dataS = formatDate(matched.detalhesSaida?.dataSaida || '');
+      setForeignTomboFeedback({
+        type: 'found_other',
+        asset: matched,
+        message: `AVISO: O Tombo ${matched.tombamento} (${matched.descricao}) já teve BAIXA/SAÍDA REGISTRADA (${tipoLabel}). Destino: "${dest}". Processo: ${proc} (Data da Saída: ${dataS}). Local de origem anterior: ${matched.unidadeNome} — ${matched.setorNome}. Este bem não consta mais ativo nesta ou em outra sala!`
       });
       return;
     }

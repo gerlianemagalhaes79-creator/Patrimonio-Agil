@@ -94,6 +94,9 @@ export interface Asset {
     dataSaida: string;
     responsavelDestino?: string;
     motivo?: string;
+    setorOrigemAnterior?: string;
+    unidadeOrigemAnterior?: string;
+    termoGeradoId?: string;
   };
   auditoria: AuditRecord;
 }
@@ -263,6 +266,20 @@ export interface TrashedSector {
 
 export type ExitType = 'devolucao' | 'doacao' | 'baixa_comodato' | 'outra_saida';
 
+export interface ExitLinkedAsset {
+  assetId: string;
+  tombamento: string;
+  tomboOrigemSesa?: string;
+  descricao: string;
+  valor: number;
+  origemTombo: TomboOrigin;
+  unidadeOrigem: string;
+  setorOrigem: string;
+  subsetorOrigem?: string;
+  estado?: string;
+  numeroSerie?: string;
+}
+
 export interface AssetExit {
   id: string; // Ex: "exit-1729012345"
   assetId: string;
@@ -274,7 +291,7 @@ export interface AssetExit {
   assetUnidadeOrigem: string;
   assetSetorOrigem: string;
   tipoSaida: ExitType; // 'devolucao' | 'doacao' | 'baixa_comodato' | 'outra_saida'
-  destinatario: string; // Ex: "Secretaria da Saúde do Ceará - SESA" ou "Universidade Federal do Ceará - UFC" ou "Prefeitura..."
+  destinatario: string; // Ex: "Secretaria da Saúde do Estado do Ceará - SESA" ou "Universidade Federal do Ceará - UFC" ou "Prefeitura..."
   destinatarioResponsavel?: string; // Nome de quem recebeu / conferiu
   destinatarioCargo?: string;
   destinatarioDocumento?: string; // Matrícula, RG ou CPF
@@ -285,4 +302,6 @@ export interface AssetExit {
   registradoPor: string; // Nome da Gestora
   status: 'concluida' | 'cancelada';
   observacoes?: string;
+  termoGeradoId?: string;
+  bens?: ExitLinkedAsset[];
 }

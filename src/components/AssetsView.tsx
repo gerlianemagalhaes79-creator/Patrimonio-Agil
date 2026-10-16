@@ -32,7 +32,8 @@ import {
   ShoppingBag,
   ClipboardList,
   Trash2,
-  Sparkles
+  Sparkles,
+  ArrowUpRight
 } from 'lucide-react';
 
 export const getFormaAquisicaoBadge = (formaRaw?: string) => {
@@ -119,6 +120,7 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
   const [selectedCondition, setSelectedCondition] = useState<string>('all');
   const [selectedFornecedor, setSelectedFornecedor] = useState<string>('all');
   const [selectedFormaAquisicao, setSelectedFormaAquisicao] = useState<string>('all');
+  const [selectedStatusSaida, setSelectedStatusSaida] = useState<'all' | 'ativos' | 'saidas'>('all');
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [inspectingAsset, setInspectingAsset] = useState<Asset | null>(null);
   const [printingPlaqueAsset, setPrintingPlaqueAsset] = useState<Asset | null>(null);
@@ -476,17 +478,23 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
       if (selectedFormaAquisicao !== 'all' && (asset.formaAquisicao || 'Compra / Pregão') !== selectedFormaAquisicao) {
         return false;
       }
+      if (selectedStatusSaida === 'ativos' && asset.statusSaida && asset.statusSaida !== 'ativo') {
+        return false;
+      }
+      if (selectedStatusSaida === 'saidas' && (!asset.statusSaida || asset.statusSaida === 'ativo')) {
+        return false;
+      }
       if (searchTerm.trim()) {
         return assetMatchesQuery(asset, searchTerm);
       }
       return true;
     });
-  }, [assets, selectedUnitId, selectedSectorId, selectedTomboOrigin, selectedCondition, selectedFornecedor, selectedFormaAquisicao, searchTerm]);
+  }, [assets, selectedUnitId, selectedSectorId, selectedTomboOrigin, selectedCondition, selectedFornecedor, selectedFormaAquisicao, selectedStatusSaida, searchTerm]);
 
   // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, selectedUnitId, selectedSectorId, selectedTomboOrigin, selectedCondition, selectedFornecedor, selectedFormaAquisicao, itemsPerPage]);
+  }, [searchTerm, selectedUnitId, selectedSectorId, selectedTomboOrigin, selectedCondition, selectedFornecedor, selectedFormaAquisicao, selectedStatusSaida, itemsPerPage]);
 
   const totalPages = Math.ceil(filteredAssets.length / itemsPerPage) || 1;
   const paginatedAssets = useMemo(() => {
@@ -731,9 +739,26 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
 
         {/* Cross-Filter Notification Banner */}
         {searchTerm.trim() && filteredAssets.length === 0 && globalMatches.length > 0 && (
-          <div className="p-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
-            <div className="text-blue-900 dark:text-blue-200">
-              💡 O tombo <strong>"{searchTerm}"</strong> foi encontrado no acervo ({globalMatches[0].tombamento} – {globalMatches[0].descricao}), localizado em <strong>{globalMatches[0].unidadeNome}</strong> ({globalMatches[0].setorNome}), mas está oculto pelo filtro atual.
+          <div className="p-3 bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-900/60 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs shadow-xs">
+            <div className="text-purple-950 dark:text-purple-200 leading-relaxed">
+              {globalMatches[0].statusSaida && globalMatches[0].statusSaida !== 'ativo' ? (
+                <>
+                  <div className="flex items-center gap-1.5 font-bold text-sm text-purple-900 dark:text-purple-100">
+                    <ArrowUpRight className="w-4 h-4 text-purple-600" />
+                    <span>O tombo "{searchTerm}" teve BAIXA / SAÍDA REGISTRADA ({globalMatches[0].statusSaida === 'devolvido' ? 'Devolução a Cedente' : 'Doação Formalizada'})!</span>
+                  </div>
+                  <div className="mt-1">
+                    <strong>Destino:</strong> {globalMatches[0].detalhesSaida?.destinatario || 'Órgão Externo'} · <strong>Processo:</strong> {globalMatches[0].detalhesSaida?.processo || '—'} · <strong>Data:</strong> {formatDate(globalMatches[0].detalhesSaida?.dataSaida || '')}
+                  </div>
+                  <div className="text-[11px] text-purple-700 dark:text-purple-300 italic mt-0.5">
+                    Local de origem anterior: {globalMatches[0].unidadeNome} ({globalMatches[0].detalhesSaida?.setorOrigemAnterior || globalMatches[0].setorNome}). Este bem não consta mais ativo no setor anterior.
+                  </div>
+                </>
+              ) : (
+                <>
+                  💡 O tombo <strong>"{searchTerm}"</strong> foi encontrado no acervo ({globalMatches[0].tombamento} – {globalMatches[0].descricao}), localizado em <strong>{globalMatches[0].unidadeNome}</strong> ({globalMatches[0].setorNome}), mas está oculto pelo filtro atual.
+                </>
+              )}
             </div>
             <button
               onClick={() => {
@@ -743,10 +768,11 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
                 setSelectedCondition('all');
                 setSelectedFornecedor('all');
                 setSelectedFormaAquisicao('all');
+                setSelectedStatusSaida('all');
               }}
-              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-md shrink-0 cursor-pointer min-h-[36px]"
+              className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-lg shrink-0 cursor-pointer min-h-[38px] shadow-xs"
             >
-              Exibir Bem Encontrado
+              Exibir Ficha do Bem
             </button>
           </div>
         )}
@@ -756,6 +782,24 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
           <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 mr-1">
             <Filter className="w-3.5 h-3.5" />
             <span className="font-medium">Filtrar:</span>
+          </div>
+
+          {/* 0. Situação no Inventário (Ativos vs Baixados) */}
+          <div className="relative">
+            <select
+              value={selectedStatusSaida}
+              onChange={(e) => setSelectedStatusSaida(e.target.value as any)}
+              className={`py-1.5 pl-2.5 pr-7 text-xs rounded-lg border font-bold focus:outline-none focus:ring-1 focus:ring-purple-500 min-h-[36px] cursor-pointer ${
+                selectedStatusSaida !== 'all'
+                  ? 'bg-purple-100 dark:bg-purple-950/60 border-purple-400 dark:border-purple-700 text-purple-950 dark:text-purple-200 shadow-2xs'
+                  : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200'
+              }`}
+              title="Filtrar por Situação no Inventário (Ativos vs Baixados)"
+            >
+              <option value="all">📦 Situação: Todos os Bens</option>
+              <option value="ativos">✅ Apenas Ativos no Acervo</option>
+              <option value="saidas">📤 Apenas Baixados (Devoluções/Doações)</option>
+            </select>
           </div>
 
           {/* 1. Fornecedor (DESTAQUE PEDIDO PELO USUÁRIO) */}
@@ -859,7 +903,7 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
             ))}
           </select>
 
-          {(selectedUnitId !== 'all' || selectedSectorId !== 'all' || selectedTomboOrigin !== 'all' || selectedCondition !== 'all' || selectedFornecedor !== 'all' || selectedFormaAquisicao !== 'all' || searchTerm) && (
+          {(selectedUnitId !== 'all' || selectedSectorId !== 'all' || selectedTomboOrigin !== 'all' || selectedCondition !== 'all' || selectedFornecedor !== 'all' || selectedFormaAquisicao !== 'all' || selectedStatusSaida !== 'all' || searchTerm) && (
             <button
               onClick={() => {
                 onSelectUnitId('all');
@@ -868,6 +912,7 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
                 setSelectedCondition('all');
                 setSelectedFornecedor('all');
                 setSelectedFormaAquisicao('all');
+                setSelectedStatusSaida('all');
                 setSearchTerm('');
               }}
               className="text-xs text-rose-500 hover:text-rose-600 font-medium ml-auto flex items-center gap-1 cursor-pointer py-1 px-2"
@@ -1171,20 +1216,43 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
                       <span>NF: {asset.notaFiscal || 'S/N'}</span>
                     </div>
 
-                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1 text-xs">
-                      <div className="flex items-center gap-1.5 text-slate-800 dark:text-slate-200 font-medium">
-                        <MapPin className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                        <span className="truncate">{asset.setorNome}</span>
-                      </div>
-                      {asset.subsetorNome && (
-                        <div className="text-[11px] text-slate-600 dark:text-slate-400 pl-5 font-semibold">
-                          Sala: {asset.subsetorNome}
+                    {asset.statusSaida && asset.statusSaida !== 'ativo' ? (
+                      <div className="pt-2 border-t border-purple-200 dark:border-purple-800 space-y-1.5 text-xs">
+                        <div className="p-2.5 rounded-xl bg-purple-50 dark:bg-purple-950/50 border border-purple-200 dark:border-purple-800 space-y-1">
+                          <div className="flex items-center gap-1.5 font-bold text-xs text-purple-900 dark:text-purple-300">
+                            <ArrowUpRight className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                            <span className="uppercase tracking-wide font-black">
+                              BAIXADO: {asset.statusSaida === 'devolvido' ? 'DEVOLUÇÃO A CEDENTE' : 'DOAÇÃO FORMALIZADA'}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-800 dark:text-slate-200 font-bold truncate" title={asset.detalhesSaida?.destinatario}>
+                            Destino: {asset.detalhesSaida?.destinatario || 'Órgão Externo'}
+                          </div>
+                          <div className="text-[10px] text-slate-500 flex items-center justify-between">
+                            <span>Proc: {asset.detalhesSaida?.processo || '—'}</span>
+                            <span>Data Saída: {formatDate(asset.detalhesSaida?.dataSaida || '')}</span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 italic pt-0.5 border-t border-purple-100 dark:border-purple-900/40">
+                            Local de origem anterior: {asset.unidadeNome} — {asset.detalhesSaida?.setorOrigemAnterior || asset.setorNome}
+                          </div>
                         </div>
-                      )}
-                      <div className="text-[11px] text-slate-500 pl-5 truncate">
-                        Responsável: {asset.responsavelNome}
                       </div>
-                    </div>
+                    ) : (
+                      <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1 text-xs">
+                        <div className="flex items-center gap-1.5 text-slate-800 dark:text-slate-200 font-medium">
+                          <MapPin className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                          <span className="truncate">{asset.setorNome}</span>
+                        </div>
+                        {asset.subsetorNome && (
+                          <div className="text-[11px] text-slate-600 dark:text-slate-400 pl-5 font-semibold">
+                            Sala: {asset.subsetorNome}
+                          </div>
+                        )}
+                        <div className="text-[11px] text-slate-500 pl-5 truncate">
+                          Responsável: {asset.responsavelNome}
+                        </div>
+                      </div>
+                    )}
 
                     {asset.auditoria?.statusDivergencia === 'setor_divergente' && (
                       <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-[10.5px] space-y-1">
@@ -1374,8 +1442,32 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
                       </div>
                     </td>
                     <td className="py-3 px-3.5 text-slate-700 dark:text-slate-300">
-                      <div className="font-semibold">{asset.unidadeNome}</div>
-                      <div className="text-[11px] text-slate-500">{asset.area || asset.setorNome} – {asset.subarea || asset.subsetorNome}</div>
+                      {asset.statusSaida && asset.statusSaida !== 'ativo' ? (
+                        <div className="space-y-0.5">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
+                            asset.statusSaida === 'devolvido'
+                              ? 'bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200 border border-blue-300'
+                              : 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200 border border-emerald-300'
+                          }`}>
+                            <ArrowUpRight className="w-3 h-3" />
+                            {asset.statusSaida === 'devolvido' ? 'Baixa: Devolução' : 'Baixa: Doação'}
+                          </span>
+                          <div className="font-bold text-slate-900 dark:text-white truncate max-w-[210px]" title={asset.detalhesSaida?.destinatario}>
+                            Destino: {asset.detalhesSaida?.destinatario || 'Órgão Externo'}
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            {asset.detalhesSaida?.processo || 'Proc. Baixa'} · {formatDate(asset.detalhesSaida?.dataSaida || '')}
+                          </div>
+                          <div className="text-[10px] text-slate-400 italic">
+                            (Origem anterior: {asset.unidadeNome.includes('CEO') ? 'CEO' : 'Policlínica'} - {asset.detalhesSaida?.setorOrigemAnterior || asset.setorNome})
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <div className="font-semibold">{asset.unidadeNome}</div>
+                          <div className="text-[11px] text-slate-500">{asset.area || asset.setorNome} – {asset.subarea || asset.subsetorNome}</div>
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-3.5 text-slate-600 dark:text-slate-400">
                       {asset.responsavelNome}
@@ -1589,6 +1681,61 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
                       <FileSpreadsheet className="w-3.5 h-3.5" />
                       Reimportar Planilha com Colunas Corretas
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Baixa / Saída Banner if asset has exited */}
+              {inspectingAsset.statusSaida && inspectingAsset.statusSaida !== 'ativo' && (
+                <div className="p-4 rounded-2xl border-2 border-purple-400 dark:border-purple-600 bg-purple-50 dark:bg-purple-950/60 text-purple-950 dark:text-purple-100 space-y-2.5 shadow-sm">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="p-2 rounded-xl bg-purple-600 text-white shadow-xs">
+                        <ArrowUpRight className="w-5 h-5" />
+                      </span>
+                      <div>
+                        <h4 className="font-black text-sm uppercase tracking-wide text-purple-950 dark:text-purple-100">
+                          BEM COM BAIXA / SAÍDA REGISTRADA ({inspectingAsset.statusSaida === 'devolvido' ? 'DEVOLUÇÃO A CEDENTE' : 'DOAÇÃO FORMALIZADA'})
+                        </h4>
+                        <p className="text-[11px] text-purple-700 dark:text-purple-300">
+                          Este bem não está mais alocado na sala de origem. Desincorporação física e patrimonial efetuada.
+                        </p>
+                      </div>
+                    </div>
+                    <span className="px-3 py-1 rounded-full text-xs font-black bg-purple-200 dark:bg-purple-900 text-purple-950 dark:text-purple-200 border border-purple-300">
+                      {inspectingAsset.detalhesSaida?.processo || 'PROCESSO DE BAIXA'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1 text-xs">
+                    <div className="p-2.5 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-purple-200 dark:border-purple-800">
+                      <span className="text-[10px] font-bold uppercase text-slate-500 block">Órgão / Entidade Destinatária:</span>
+                      <strong className="text-slate-900 dark:text-white text-xs">{inspectingAsset.detalhesSaida?.destinatario || 'Órgão Externo'}</strong>
+                      {inspectingAsset.detalhesSaida?.responsavelDestino && (
+                        <div className="text-[11px] text-slate-500 mt-0.5">Resp: {inspectingAsset.detalhesSaida.responsavelDestino}</div>
+                      )}
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-purple-200 dark:border-purple-800">
+                      <span className="text-[10px] font-bold uppercase text-slate-500 block">Processo / Ofício & Data:</span>
+                      <strong className="text-slate-900 dark:text-white text-xs">{inspectingAsset.detalhesSaida?.processo || '—'}</strong>
+                      <div className="text-[11px] text-slate-500 mt-0.5">Data da Saída: {formatDate(inspectingAsset.detalhesSaida?.dataSaida || '')}</div>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-purple-200 dark:border-purple-800">
+                      <span className="text-[10px] font-bold uppercase text-slate-500 block">Local de Origem Anterior:</span>
+                      <strong className="text-slate-900 dark:text-white text-xs">{inspectingAsset.unidadeNome}</strong>
+                      <div className="text-[11px] text-slate-500 mt-0.5">Sala Anterior: {inspectingAsset.detalhesSaida?.setorOrigemAnterior || inspectingAsset.setorNome}</div>
+                    </div>
+                  </div>
+
+                  {inspectingAsset.detalhesSaida?.motivo && (
+                    <div className="p-2.5 rounded-xl bg-white/60 dark:bg-slate-900/60 text-xs text-slate-700 dark:text-slate-300 italic border border-purple-100 dark:border-purple-900/60">
+                      <strong>Motivação / Justificativa:</strong> "{inspectingAsset.detalhesSaida.motivo}"
+                    </div>
+                  )}
+
+                  <div className="text-[11px] text-purple-950 dark:text-purple-200 font-semibold bg-purple-100/70 dark:bg-purple-900/40 p-2.5 rounded-xl flex items-center gap-2 border border-purple-200 dark:border-purple-800">
+                    <ShieldCheck className="w-4 h-4 text-purple-700 dark:text-purple-300 shrink-0" />
+                    <span>Utilize o <strong>Termo Oficial de Saída</strong> emitido pelo sistema para efetuar a comprovação e baixa manual no sistema <strong>ARESPEC</strong>.</span>
                   </div>
                 </div>
               )}

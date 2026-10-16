@@ -22,7 +22,8 @@ import {
   ChevronRight,
   Compass,
   RefreshCw,
-  Trash2
+  Trash2,
+  ArrowUpRight
 } from 'lucide-react';
 import { NewLocationModal } from './NewLocationModal';
 import { buildUnitSubareas, getAssetUnitId, normalizeLoc } from '../utils/locationHelper';
@@ -64,12 +65,15 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
   const [sectorToDelete, setSectorToDelete] = useState<Sector | null>(null);
   const [deleteSectorReason, setDeleteSectorReason] = useState<string>('Sala duplicada ou criada por engano');
 
-  // Garante de forma blindada que nenhum bem na lixeira seja computado ou exibido no mapa
+  // Garante de forma blindada que nenhum bem na lixeira ou baixado por saída/devolução/doação apareça no mapa ativo
   const activeAssets = useMemo(() => {
     const trashedIds = new Set<string>();
+    const trashedTombos = new Set<string>();
+
     if (trashAssets && trashAssets.length > 0) {
       trashAssets.forEach(t => {
         if (t?.asset?.id) trashedIds.add(t.asset.id);
+        if (t?.asset?.tombamento) trashedTombos.add(String(t.asset.tombamento).trim());
       });
     }
     try {
@@ -79,6 +83,7 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
         if (Array.isArray(parsed)) {
           parsed.forEach((t: any) => {
             if (t?.asset?.id) trashedIds.add(t.asset.id);
+            if (t?.asset?.tombamento) trashedTombos.add(String(t.asset.tombamento).trim());
           });
         }
       }
@@ -86,8 +91,17 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
       // ignore
     }
 
-    if (trashedIds.size === 0) return assets;
-    return assets.filter(a => !trashedIds.has(a.id));
+    return assets.filter(a => {
+      // 1. Exclui se está na lixeira
+      if (trashedIds.has(a.id)) return false;
+      const tombo = (a.tombamento || '').toString().trim();
+      if (tombo && trashedTombos.has(tombo)) return false;
+
+      // 2. Exclui bens com saída / baixa registrada (devolução ou doação)
+      if (a.statusSaida && a.statusSaida !== 'ativo') return false;
+
+      return true;
+    });
   }, [assets, trashAssets]);
 
   // Garante de forma blindada que nenhuma sala na lixeira apareça no mapa
@@ -145,6 +159,19 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
     return Array.from(set);
   }, [sectorsWithStats]);
 
+  // Identifica se a pesquisa do usuário corresponde a um bem que já teve saída / baixa registrada
+  const searchedExitedAsset = useMemo(() => {
+    if (!searchQuery.trim()) return null;
+    const q = searchQuery.trim().toLowerCase();
+    return assets.find(a => 
+      a.statusSaida && a.statusSaida !== 'ativo' && (
+        (a.tombamento && a.tombamento.toLowerCase() === q) ||
+        (a.tomboOrigemSesa && a.tomboOrigemSesa.toLowerCase() === q) ||
+        (a.tombamento && a.tombamento.toLowerCase().includes(q))
+      )
+    ) || null;
+  }, [searchQuery, assets]);
+
   // Filtros aplicados sobre as salas
   const filteredSectors = useMemo(() => {
     return sectorsWithStats.filter(s => {
@@ -163,7 +190,12 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
         const matchesSigla = s.sigla.toLowerCase().includes(q);
         const matchesResp = (s.responsavelNome || '').toLowerCase().includes(q);
         const matchesBlock = (s.bloco || '').toLowerCase().includes(q);
-        return matchesName || matchesSigla || matchesResp || matchesBlock;
+        const matchesAsset = s.roomAssets.some(a => 
+          (a.tombamento && a.tombamento.toLowerCase().includes(q)) ||
+          (a.tomboOrigemSesa && a.tomboOrigemSesa.toLowerCase().includes(q)) ||
+          (a.descricao && a.descricao.toLowerCase().includes(q))
+        );
+        return matchesName || matchesSigla || matchesResp || matchesBlock || matchesAsset;
       }
 
       return true;
@@ -536,6 +568,22 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Alerta de Tombo com Saída / Baixa Registrada */}
+      {searchedExitedAsset && (
+        <div className="p-4 bg-purple-50 dark:bg-purple-950/60 border-2 border-purple-400 dark:border-purple-600 rounded-2xl text-xs space-y-1.5 shadow-sm animate-in fade-in duration-150">
+          <div className="flex items-center gap-2 font-bold text-sm text-purple-900 dark:text-purple-100">
+            <ArrowUpRight className="w-5 h-5 text-purple-600 shrink-0" />
+            <span>O Tombo "{searchedExitedAsset.tombamento}" ({searchedExitedAsset.descricao}) teve BAIXA / SAÍDA REGISTRADA ({searchedExitedAsset.statusSaida === 'devolvido' ? 'Devolução a Cedente' : 'Doação Formalizada'})!</span>
+          </div>
+          <div className="text-slate-800 dark:text-slate-200 text-xs">
+            <strong>Destino:</strong> {searchedExitedAsset.detalhesSaida?.destinatario || 'Órgão Externo'} · <strong>Processo:</strong> {searchedExitedAsset.detalhesSaida?.processo || '—'} · <strong>Data da Saída:</strong> {formatDate(searchedExitedAsset.detalhesSaida?.dataSaida || '')}
+          </div>
+          <div className="text-[11px] text-purple-700 dark:text-purple-300 italic pt-0.5 border-t border-purple-200/80 dark:border-purple-800/80">
+            Local de origem anterior: {searchedExitedAsset.unidadeNome} — {searchedExitedAsset.detalhesSaida?.setorOrigemAnterior || searchedExitedAsset.setorNome}. Este bem foi desincorporado e não consta mais ativo no mapa da unidade.
+          </div>
+        </div>
+      )}
 
       {/* VISUAL MAP: RENDERED BLOCK BY BLOCK */}
       <div className="space-y-6">
