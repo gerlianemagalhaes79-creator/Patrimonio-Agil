@@ -1,4 +1,4 @@
-import { Asset } from '../types';
+import { Asset, Sector, TrashedAsset } from '../types';
 
 /**
  * Normaliza e gera uma chave única estável para desduplicar bens patrimoniais.
@@ -119,4 +119,107 @@ export function deduplicateAssetsList(assets: Asset[]): { uniqueAssets: Asset[];
   const removedCount = Math.max(0, assets.length - uniqueAssets.length);
 
   return { uniqueAssets, removedCount };
+}
+
+/**
+ * Conta quantas salas/setores duplicados existem cadastrados para a mesma unidade.
+ */
+export function countDuplicateSectors(sectors: Sector[]): number {
+  const seen = new Set<string>();
+  let duplicates = 0;
+
+  for (const s of sectors) {
+    const unitKey = (s.unidadeId || 'geral').toLowerCase();
+    const norm = (s.nome || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const canon = norm.replace(/^[0-9]+[\s\-_.]*/, '').trim() || norm;
+    const compoundKey = `${unitKey}::${canon}`;
+
+    if (seen.has(compoundKey)) {
+      duplicates++;
+    } else {
+      seen.add(compoundKey);
+    }
+  }
+
+  return duplicates;
+}
+
+/**
+ * Desduplica a lista de setores / salas por unidade e nome canônico.
+ * Garante que nomes como "004 - COPA" e "COPA" sejam fundidos em um único setor oficial,
+ * preservando o nome oficial do ASPEC e o status de revisão.
+ */
+export function deduplicateSectorsList(sectors: Sector[]): {
+  uniqueSectors: Sector[];
+  removedCount: number;
+} {
+  const map = new Map<string, Sector>();
+
+  for (const s of sectors) {
+    const unitKey = (s.unidadeId || 'geral').toLowerCase();
+    const norm = (s.nome || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const canon = norm.replace(/^[0-9]+[\s\-_.]*/, '').trim() || norm;
+    const compoundKey = `${unitKey}::${canon}`;
+
+    const existing = map.get(compoundKey);
+    if (!existing) {
+      map.set(compoundKey, { ...s });
+    } else {
+      // Prioridade: se o setor atual tem código de prefixo oficial (ex: "004 - COPA") e o existente não, usa o oficial!
+      const currentHasDigits = /^[0-9]+[\s\-_.]/.test(s.nome);
+      const existingHasDigits = /^[0-9]+[\s\-_.]/.test(existing.nome);
+
+      const preferredNome = currentHasDigits && !existingHasDigits ? s.nome : existing.nome;
+      const preferredId = !existing.id.startsWith('sec-custom-') ? existing.id : s.id;
+      const isRevisada = Boolean(existing.revisada || s.revisada);
+      const dataRevisao = existing.dataRevisao || s.dataRevisao;
+      const responsavelRevisao = existing.responsavelRevisao || s.responsavelRevisao;
+
+      map.set(compoundKey, {
+        ...existing,
+        id: preferredId,
+        nome: preferredNome,
+        sigla: existing.sigla || s.sigla,
+        responsavelNome: existing.responsavelNome !== 'Responsável Setorial' ? existing.responsavelNome : (s.responsavelNome || existing.responsavelNome),
+        revisada: isRevisada,
+        dataRevisao,
+        responsavelRevisao,
+      });
+    }
+  }
+
+  const uniqueSectors = Array.from(map.values());
+  const removedCount = Math.max(0, sectors.length - uniqueSectors.length);
+
+  return { uniqueSectors, removedCount };
+}
+
+/**
+ * Detecta bens na lixeira que foram apagados por engano sob justificativa de "duplicidade",
+ * mas cujo tombo NÃO EXISTE mais no acervo ativo (ou seja, o usuário apagou o único exemplar).
+ */
+export function findFalseDuplicateTrashedAssets(
+  activeAssets: Asset[],
+  trashAssets: TrashedAsset[]
+): TrashedAsset[] {
+  const activeKeys = new Set<string>();
+  const activeTombos = new Set<string>();
+
+  for (const a of activeAssets) {
+    activeKeys.add(getAssetDeduplicationKey(a));
+    if (a.tombamento) activeTombos.add(a.tombamento.trim().toLowerCase());
+  }
+
+  return trashAssets.filter(t => {
+    const reason = (t.reason || '').toLowerCase();
+    const isDuplicityReason = reason.includes('duplic') || reason.includes('sala') || reason.includes('copa') || reason.includes('repet');
+    if (!isDuplicityReason) return false;
+
+    const tKey = getAssetDeduplicationKey(t.asset);
+    const tTombo = (t.asset.tombamento || '').trim().toLowerCase();
+
+    // Se o tombo ou chave não existe mais nos bens ativos, trata-se de falsa duplicidade!
+    const existsInActive = activeKeys.has(tKey) || (tTombo ? activeTombos.has(tTombo) : false);
+    return !existsInActive;
+  });
 }

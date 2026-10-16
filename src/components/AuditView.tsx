@@ -1,7 +1,8 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
-import { Asset, Sector, UnitInfo, UserProfile, AssetCondition } from '../types';
+import { Asset, Sector, UnitInfo, UserProfile, AssetCondition, TrashedAsset } from '../types';
 import { formatBRL, formatDate, formatDateTime, exportAuditReportCsv } from '../utils/formatters';
 import { executePrintHtml, downloadPrintableHtml, openPrintableInNewWindow } from '../utils/printHelper';
+import { getAssetDeduplicationKey, countDuplicateAssets, countDuplicateSectors, findFalseDuplicateTrashedAssets } from '../utils/assetDeduplication';
 import { 
   Building2, 
   MapPin, 
@@ -41,7 +42,8 @@ import {
   Users,
   UserCheck,
   Edit3,
-  RotateCcw
+  RotateCcw,
+  Trash2
 } from 'lucide-react';
 import { MacroMicroInventoryReportModal } from './MacroMicroInventoryReportModal';
 import { AspecReconciliationModal } from './AspecReconciliationModal';
@@ -88,6 +90,11 @@ interface AuditViewProps {
   onUpdateSector?: (sectorIdOrName: string, updates: Partial<Sector>) => void;
   onAddNewLocation?: (newSector: Sector) => void;
   onResetAllAudits?: () => void;
+  onDeleteAsset?: (assetId: string, reason?: string) => void;
+  onDeleteSector?: (sectorIdOrName: string, reason?: string) => void;
+  onExecuteDeduplicationRule?: () => Promise<{ assetsRemoved: number; sectorsMerged: number; assetsRestored: number } | void> | void;
+  trashAssets?: TrashedAsset[];
+  onNavigateToTrash?: () => void;
 }
 
 export const AuditView: React.FC<AuditViewProps> = ({
@@ -108,6 +115,11 @@ export const AuditView: React.FC<AuditViewProps> = ({
   onUpdateSector,
   onAddNewLocation,
   onResetAllAudits,
+  onDeleteAsset,
+  onDeleteSector,
+  onExecuteDeduplicationRule,
+  trashAssets = [],
+  onNavigateToTrash,
 }) => {
   // Tab: Default is 'salas' (Salas & Setores - exactly as requested: no camera / QR code blocking on open!)
   const [activeTab, setActiveTab] = useState<'salas' | 'divergencias' | 'conciliacao' | 'relatorio' | 'scanner'>('salas');
@@ -116,10 +128,42 @@ export const AuditView: React.FC<AuditViewProps> = ({
   const [showGuideModal, setShowGuideModal] = useState<boolean>(false);
   const [showRoomAspecModal, setShowRoomAspecModal] = useState<boolean>(false);
   const [showUnlocatedModal, setShowUnlocatedModal] = useState<boolean>(false);
+  const [showDeduplicationModal, setShowDeduplicationModal] = useState<boolean>(false);
+  const [isDeduplicating, setIsDeduplicating] = useState<boolean>(false);
+  const [dedupResult, setDedupResult] = useState<{ assetsRemoved: number; sectorsMerged: number; assetsRestored: number } | null>(null);
   const [roomNewSemPlaqueta, setRoomNewSemPlaqueta] = useState<boolean>(false);
   const [roomNewForaDoAspec, setRoomNewForaDoAspec] = useState<boolean>(false);
   const [isNewLocationModalOpen, setIsNewLocationModalOpen] = useState<boolean>(false);
   const [roomFilterStatus, setRoomFilterStatus] = useState<'all' | 'conferidas' | 'pendentes'>('all');
+
+  // Delete modals states
+  const [assetToDelete, setAssetToDelete] = useState<Asset | null>(null);
+  const [deleteAssetReason, setDeleteAssetReason] = useState<string>('Duplicidade no cadastro da sala');
+  const [showDeleteRoomModal, setShowDeleteRoomModal] = useState<boolean>(false);
+  const [deleteRoomReason, setDeleteRoomReason] = useState<string>('Sala duplicada ou criada por engano');
+
+  // Contagem inteligente de duplicidades e falsas exclusões
+  const falseDuplicatesCount = useMemo(() => {
+    if (!trashAssets || trashAssets.length === 0) return 0;
+    return findFalseDuplicateTrashedAssets(assets, trashAssets).length;
+  }, [assets, trashAssets]);
+
+  const duplicateSectorsCount = useMemo(() => {
+    return countDuplicateSectors(sectors);
+  }, [sectors]);
+
+  const { duplicatesCount: duplicateAssetsCount } = useMemo(() => {
+    return countDuplicateAssets(assets);
+  }, [assets]);
+
+  const totalPotentialDuplicates = duplicateSectorsCount + duplicateAssetsCount + falseDuplicatesCount;
+
+  // Verificação para o modal de exclusão: se o bem sendo excluído é exemplar único ou possui cópias reais
+  const assetCopiesInSystem = useMemo(() => {
+    if (!assetToDelete) return 0;
+    const key = getAssetDeduplicationKey(assetToDelete);
+    return assets.filter(a => getAssetDeduplicationKey(a) === key).length;
+  }, [assetToDelete, assets]);
 
   // Side-by-side Dual Version Comparison Modal & Room Conference Draft States
   const [showRoomComparisonModal, setShowRoomComparisonModal] = useState<boolean>(false);
@@ -346,11 +390,60 @@ export const AuditView: React.FC<AuditViewProps> = ({
     }
   }, [initialSectorName, unitSectorsList]);
 
-  // Selected Sector Details & Assets
+  // Selected Sector Details & Assets (procura na lista completa para nunca fechar a sala ao conferir itens)
   const activeSector = useMemo(() => {
     if (!selectedSectorId) return null;
-    return unitSectorsList.find(s => s.id === selectedSectorId || s.nome.trim().toLowerCase() === selectedSectorId.toLowerCase()) || null;
-  }, [unitSectorsList, selectedSectorId]);
+    const targetNorm = normalizeLoc(selectedSectorId);
+    
+    // 1. Procura na lista completa de salas da unidade
+    const foundInAll = allUnitSectorsList.find(s => 
+      s.id === selectedSectorId || 
+      normalizeLoc(s.id) === targetNorm ||
+      normalizeLoc(s.nome) === targetNorm ||
+      s.nome.trim().toLowerCase() === selectedSectorId.toLowerCase()
+    );
+    if (foundInAll) return foundInAll;
+
+    // 2. Procura na lista filtrada
+    const foundInFiltered = unitSectorsList.find(s => 
+      s.id === selectedSectorId || 
+      normalizeLoc(s.id) === targetNorm ||
+      normalizeLoc(s.nome) === targetNorm
+    );
+    if (foundInFiltered) return foundInFiltered;
+
+    // 3. Fallback: setores cadastrados na unidade (ex: nova sala recém-adicionada)
+    const baseSec = sectors.find(s => 
+      (s.id === selectedSectorId || normalizeLoc(s.nome) === targetNorm) &&
+      (s.unidadeId === selectedUnitId || !selectedUnitId)
+    );
+    if (baseSec) {
+      return {
+        id: baseSec.id,
+        nome: baseSec.nome,
+        sigla: baseSec.sigla,
+        unidadeId: baseSec.unidadeId as any,
+        unidadeNome: baseSec.unidadeNome,
+        responsavel: baseSec.responsavelNome,
+        responsavelCargo: baseSec.responsavelCargo,
+        responsavelOriginalAspec: baseSec.responsavelOriginalAspec,
+        liderAlterado: baseSec.liderAlterado,
+        dataAlteracaoLider: baseSec.dataAlteracaoLider,
+        bloco: baseSec.bloco,
+        andar: baseSec.andar,
+        revisada: baseSec.revisada || false,
+        dataRevisao: undefined,
+        responsavelRevisao: undefined,
+        assetsCount: 0,
+        checkedCount: 0,
+        pendingCount: 0,
+        totalVal: 0,
+        percent: 0
+      };
+    }
+
+    return null;
+  }, [allUnitSectorsList, unitSectorsList, sectors, selectedSectorId, selectedUnitId]);
 
   const activeSectorAssets = useMemo(() => {
     if (!activeSector) return [];
@@ -896,9 +989,17 @@ export const AuditView: React.FC<AuditViewProps> = ({
   const handleConfirmDivergentLocation = (asset: Asset, targetRoom: string, targetUnit: string) => {
     const originalSetor = asset.setorOriginalAspec || asset.setorNome;
     const originalUnidade = asset.unidadeOriginalAspec || asset.unidadeNome;
+    const targetUnitId = (activeSector && 'unidadeId' in activeSector ? (activeSector as any).unidadeId : '') || activeUnitInfo.id;
 
     const updated: Asset = {
       ...asset,
+      unidadeId: targetUnitId as any,
+      unidadeNome: activeUnitInfo.nome,
+      area: activeUnitInfo.nome,
+      setorId: activeSector?.id || asset.setorId,
+      setorNome: targetRoom,
+      subarea: targetRoom,
+      subsetorNome: targetRoom,
       setorOriginalAspec: originalSetor,
       unidadeOriginalAspec: originalUnidade,
       statusRegularizacaoAspec: 'provisorio',
@@ -937,6 +1038,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
       });
     }
 
+    markRoomAsDraft(targetRoom);
     setPendingDivergenceConfirmation(null);
     setShowAddRoomAssetModal(false);
     setForeignTomboFeedback(null);
@@ -948,7 +1050,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
     setRoomNewFornecedor('');
     setRoomNewValor('');
     setMatchedExistingAsset(null);
-    setBulkFeedback(`Localização provisória registrada! No ASPEC consta em "${originalSetor}" e na vistoria consta provisoriamente em "${targetRoom}". Aguardando OK oficial da Gestora.`);
+    setBulkFeedback(`Localização provisória registrada! Item "${asset.descricao}" (${asset.tombamento}) alocado com sucesso na sala "${targetRoom}".`);
     setTimeout(() => setBulkFeedback(null), 8000);
   };
 
@@ -1101,22 +1203,51 @@ export const AuditView: React.FC<AuditViewProps> = ({
   // Quick Action: Save an Untracked Asset found while inspecting this room
   const handleSaveRoomUntrackedAsset = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!roomNewDescricao.trim() || !activeSector) return;
+    if (!activeSector) return;
+    if (!roomNewDescricao.trim() && !matchedExistingAsset) return;
 
-    // Se o bem já existia no banco/ASPEC
-    if (matchedExistingAsset) {
-      const belongsHere = doesAssetOfficiallyMatchRoom(matchedExistingAsset, activeSector.nome);
+    // Se o bem já existia no banco/ASPEC ou se foi digitado tombo existente
+    let targetExisting = matchedExistingAsset;
+    if (!targetExisting && (roomNewTombo.trim() || roomNewTomboSesa.trim())) {
+      const cleanT = roomNewTombo.trim().toLowerCase();
+      const digitsT = cleanT.replace(/\D/g, '');
+      const cleanS = roomNewTomboSesa.trim().toLowerCase();
+      const digitsS = cleanS.replace(/\D/g, '');
+
+      targetExisting = assets.find(a => {
+        const tVal = a.tombamento.toLowerCase();
+        const cVal = (a.tomboConsorcio || '').toLowerCase();
+        const sVal = (a.tomboSesa || a.tomboOrigemSesa || '').toLowerCase();
+        if (cleanT && (tVal === cleanT || cVal === cleanT)) return true;
+        if (cleanS && (sVal === cleanS || tVal === cleanS)) return true;
+        if (digitsT && digitsT.length >= 2) {
+          const tDig = tVal.replace(/\D/g, '');
+          const cDig = cVal.replace(/\D/g, '');
+          if ((tDig && (tDig === digitsT || parseInt(tDig, 10) === parseInt(digitsT, 10))) ||
+              (cDig && (cDig === digitsT || parseInt(cDig, 10) === parseInt(digitsT, 10)))) return true;
+        }
+        if (digitsS && digitsS.length >= 2) {
+          const sDig = sVal.replace(/\D/g, '');
+          if (sDig && (sDig === digitsS || parseInt(sDig, 10) === parseInt(digitsS, 10))) return true;
+        }
+        return false;
+      }) || null;
+    }
+
+    if (targetExisting) {
+      const belongsHere = doesAssetOfficiallyMatchRoom(targetExisting, activeSector.nome);
       if (!belongsHere) {
         // Disparar confirmação de modificação de setor obrigatória
+        setShowAddRoomAssetModal(false);
         setPendingDivergenceConfirmation({
-          asset: matchedExistingAsset,
+          asset: targetExisting,
           targetRoom: activeSector.nome,
           targetUnit: activeUnitInfo.nome
         });
         return;
       } else {
         // Já pertencia a esta sala no ASPEC
-        handleQuickConfirm(matchedExistingAsset);
+        handleQuickConfirm(targetExisting);
         setShowAddRoomAssetModal(false);
         setRoomNewTombo('');
         setRoomNewTomboSesa('');
@@ -1126,7 +1257,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
         setRoomNewValor('');
         setRoomNewForaDoAspec(false);
         setMatchedExistingAsset(null);
-        setBulkFeedback(`Item "${matchedExistingAsset.descricao}" conferido com sucesso nesta sala!`);
+        setBulkFeedback(`Item "${targetExisting.descricao}" conferido com sucesso nesta sala!`);
         setTimeout(() => setBulkFeedback(null), 5000);
         return;
       }
@@ -1138,6 +1269,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
       : (roomNewTombo.trim() || `TOMBO-${Math.floor(1000 + Math.random() * 9000)}`);
 
     const isUntracked = roomNewForaDoAspec || roomNewSemPlaqueta;
+    const targetUnitId = (activeSector && 'unidadeId' in activeSector ? (activeSector as any).unidadeId : '') || activeUnitInfo.id;
 
     const newAsset: Asset = {
       id: `asset-room-${Date.now()}`,
@@ -1150,8 +1282,8 @@ export const AuditView: React.FC<AuditViewProps> = ({
       origemRecurso: isUntracked ? 'Achado em Campo (Não Constava no ASPEC)' : 'Cadastro ASPEC',
       formaAquisicao: isUntracked ? 'Achado de Inventário' : 'Compra / Pregão Eletrônico',
       orgao: 'Consórcio Público de Saúde da Microrregião de Sobral (CPSMS)',
-      descricao: roomNewDescricao.trim(),
-      unidadeId: activeUnitInfo.id,
+      descricao: roomNewDescricao.trim() || 'Bem Patrimonial em Campo',
+      unidadeId: targetUnitId as any,
       unidadeNome: activeUnitInfo.nome,
       area: activeUnitInfo.nome,
       subarea: activeSector.nome,
@@ -1195,6 +1327,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
     };
 
     onAddAsset?.(newAsset);
+    markRoomAsDraft(activeSector.nome);
     setShowAddRoomAssetModal(false);
     setRoomNewTombo('');
     setRoomNewTomboSesa('');
@@ -1205,7 +1338,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
     setRoomNewSemPlaqueta(false);
     setRoomNewForaDoAspec(false);
     setMatchedExistingAsset(null);
-    setBulkFeedback(`Item "${newAsset.descricao}" (${newAsset.tombamento}) registrado na sala "${activeSector.nome}" e incluído na lista para o ASPEC!`);
+    setBulkFeedback(`Item "${newAsset.descricao}" (${newAsset.tombamento}) registrado na sala "${activeSector.nome}" com sucesso!`);
     setTimeout(() => setBulkFeedback(null), 6000);
   };
 
@@ -1213,15 +1346,40 @@ export const AuditView: React.FC<AuditViewProps> = ({
   const handleSearchForeignTombo = () => {
     if (!foreignTomboInput.trim() || !activeSector) return;
     const q = foreignTomboInput.trim().toLowerCase();
-    const matched = assets.find(a => 
-      a.tombamento.toLowerCase() === q ||
-      (a.tomboConsorcio && a.tomboConsorcio.toLowerCase() === q) ||
-      (a.tomboOrigemSesa && a.tomboOrigemSesa.toLowerCase() === q) ||
-      (a.tomboSesa && a.tomboSesa.toLowerCase() === q) ||
-      (a.tomboUfc && a.tomboUfc.toLowerCase() === q) ||
-      (a.tomboFcpc && a.tomboFcpc.toLowerCase() === q) ||
-      (a.outrosTombos && a.outrosTombos.toLowerCase() === q)
-    );
+    const digitsQ = q.replace(/\D/g, '');
+
+    const matched = assets.find(a => {
+      const tVal = a.tombamento.toLowerCase();
+      const cVal = (a.tomboConsorcio || '').toLowerCase();
+      const sVal = (a.tomboSesa || a.tomboOrigemSesa || '').toLowerCase();
+      const uVal = (a.tomboUfc || '').toLowerCase();
+      const fVal = (a.tomboFcpc || '').toLowerCase();
+      const oVal = (a.outrosTombos || a.tomboSecundario || '').toLowerCase();
+
+      // Correspondência textual direta
+      if (
+        tVal === q ||
+        cVal === q ||
+        sVal === q ||
+        uVal === q ||
+        fVal === q ||
+        oVal === q
+      ) return true;
+
+      // Correspondência numérica inteligente (ex: "0184" bate com "CPSMS-0184", "184", etc.)
+      if (digitsQ && digitsQ.length >= 2) {
+        const tDig = tVal.replace(/\D/g, '');
+        const cDig = cVal.replace(/\D/g, '');
+        const sDig = sVal.replace(/\D/g, '');
+        if ((tDig && (tDig === digitsQ || parseInt(tDig, 10) === parseInt(digitsQ, 10))) ||
+            (cDig && (cDig === digitsQ || parseInt(cDig, 10) === parseInt(digitsQ, 10))) ||
+            (sDig && (sDig === digitsQ || parseInt(sDig, 10) === parseInt(digitsQ, 10)))) {
+          return true;
+        }
+      }
+
+      return false;
+    });
 
     if (!matched) {
       setForeignTomboFeedback({
@@ -1258,7 +1416,6 @@ export const AuditView: React.FC<AuditViewProps> = ({
       });
     }
   };
-
   const handleConfirmForeignAssetInCurrentRoom = (asset: Asset) => {
     if (!activeSector) return;
     handleConfirmDivergentLocation(asset, activeSector.nome, activeUnitInfo.nome);
@@ -1832,6 +1989,27 @@ export const AuditView: React.FC<AuditViewProps> = ({
                     </button>
                   </div>
 
+                  {/* Regra da Desduplicidade Button */}
+                  {onExecuteDeduplicationRule && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDedupResult(null);
+                        setShowDeduplicationModal(true);
+                      }}
+                      className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl shadow-xs transition-all cursor-pointer shrink-0"
+                      title="Regra da Desduplicidade: Unificar salas duplicadas (ex: 004-COPA e COPA), bens repetidos e restaurar itens apagados por falsa duplicidade"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-slate-950" />
+                      <span>Regra da Desduplicidade</span>
+                      {totalPotentialDuplicates > 0 && (
+                        <span className="px-1.5 py-0.5 rounded-full bg-slate-950 text-amber-300 text-[10px] font-mono font-black">
+                          {totalPotentialDuplicates}
+                        </span>
+                      )}
+                    </button>
+                  )}
+
                   {/* Add New Room / Physical Area Button */}
                   {onAddNewLocation && (
                     <button
@@ -2282,6 +2460,22 @@ export const AuditView: React.FC<AuditViewProps> = ({
                       </div>
                     )}
                   </div>
+
+                  {/* Excluir Sala (Enviar para Lixeira com Quarentena 7d) */}
+                  {onDeleteSector && activeSector && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeleteRoomReason('Sala duplicada ou criada por engano');
+                        setShowDeleteRoomModal(true);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-2.5 text-xs sm:text-sm font-bold bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800 rounded-xl transition-colors cursor-pointer"
+                      title="Mover esta sala para a Lixeira (quarentena segura de 7 dias)"
+                    >
+                      <Trash2 className="w-4 h-4 text-rose-600" />
+                      <span>Excluir Sala</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -2570,6 +2764,10 @@ export const AuditView: React.FC<AuditViewProps> = ({
                           type="button"
                           onClick={() => {
                             setRoomNewTombo(foreignTomboInput.trim());
+                            setRoomNewTomboSesa('');
+                            setRoomNewDescricao('');
+                            setRoomNewForaDoAspec(true);
+                            setMatchedExistingAsset(null);
                             setShowAddRoomAssetModal(true);
                             setForeignTomboFeedback(null);
                           }}
@@ -2948,6 +3146,21 @@ export const AuditView: React.FC<AuditViewProps> = ({
                                 </button>
                               </div>
                             )}
+
+                            {onDeleteAsset && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAssetToDelete(asset);
+                                  setDeleteAssetReason('Duplicidade no cadastro da sala');
+                                }}
+                                className="text-xs font-semibold text-rose-500 hover:text-rose-700 flex items-center justify-center gap-1 p-1 mt-1 cursor-pointer transition-colors"
+                                title="Mover este bem para a Lixeira (remover bem ou duplicidade)"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Excluir Bem</span>
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -3034,6 +3247,20 @@ export const AuditView: React.FC<AuditViewProps> = ({
                                 </button>
                               </div>
                             )}
+
+                            {onDeleteAsset && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAssetToDelete(asset);
+                                  setDeleteAssetReason('Duplicidade no cadastro da sala');
+                                }}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg cursor-pointer transition-colors"
+                                title="Mover para a Lixeira"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -3042,13 +3269,27 @@ export const AuditView: React.FC<AuditViewProps> = ({
                 })}
 
                 {activeSectorAssets.length === 0 && (
-                  <div className="p-10 text-center bg-slate-50 dark:bg-slate-850 rounded-3xl border border-slate-200 dark:border-slate-800 text-xs text-slate-500 space-y-2">
+                  <div className="p-10 text-center bg-slate-50 dark:bg-slate-850 rounded-3xl border border-slate-200 dark:border-slate-800 text-xs text-slate-500 space-y-3">
                     <p className="font-bold text-sm text-slate-700 dark:text-slate-300">
-                      Nenhum bem encontrado com os filtros atuais nesta sala.
+                      Nenhum bem alocado ainda nesta sala ({activeSector?.nome}).
                     </p>
-                    <p className="text-xs">
-                      Clique em "+ Adicionar Tombo" para registrar bens físicos encontrados neste ambiente (ex: bancos, ferramentas, mangueiras, mesas).
+                    <p className="text-xs max-w-md mx-auto">
+                      Você pode bipear a plaqueta no campo de busca acima ou clicar no botão abaixo para registrar os bens encontrados neste ambiente (seja tombo vindo de outra sala ou novo tombo).
                     </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRoomNewTombo('');
+                        setRoomNewTomboSesa('');
+                        setRoomNewDescricao('');
+                        setRoomNewSemPlaqueta(false);
+                        setShowAddRoomAssetModal(true);
+                      }}
+                      className="mt-2 px-5 py-2.5 text-xs font-black bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-xl transition-all cursor-pointer shadow-md inline-flex items-center gap-2"
+                    >
+                      <Plus className="w-4 h-4 text-slate-950" />
+                      <span>+ Adicionar Tombo Nesta Sala</span>
+                    </button>
                   </div>
                 )}
               </div>
@@ -4082,8 +4323,9 @@ export const AuditView: React.FC<AuditViewProps> = ({
           units={units}
           onSaveLocation={(newSec) => {
             onAddNewLocation(newSec);
-            setBulkFeedback(`Nova localização física "${newSec.nome}" (${newSec.sigla}) adicionada com sucesso!`);
-            setTimeout(() => setBulkFeedback(null), 6000);
+            setSelectedSectorId(newSec.id);
+            setBulkFeedback(`Nova localização física "${newSec.nome}" (${newSec.sigla}) adicionada com sucesso! Você já está dentro da sala para adicionar os tombos.`);
+            setTimeout(() => setBulkFeedback(null), 7000);
           }}
           currentProfile={currentProfile}
           defaultUnitId={selectedUnitId}
@@ -4136,6 +4378,315 @@ export const AuditView: React.FC<AuditViewProps> = ({
                 <RotateCcw className="w-4 h-4" />
                 <span>Sim, Começar do Zero</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Confirmar Exclusão de Sala (Mover para Lixeira com Quarentena 7d) */}
+      {showDeleteRoomModal && activeSector && (
+        <div className="fixed inset-0 z-80 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-3xl border-2 border-slate-200 dark:border-slate-800 shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="p-3 rounded-2xl bg-rose-100 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h4 className="text-base font-black">Mover Sala para a Lixeira</h4>
+                <p className="text-xs text-slate-500">Quarentena segura de 7 dias</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300">
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1">
+                <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300">
+                  {activeUnitInfo.nome}
+                </span>
+                <h5 className="font-black text-sm text-slate-900 dark:text-white">{activeSector.nome}</h5>
+                <p className="text-slate-400">Total de bens nesta sala: {activeSector.assetsCount || 0}</p>
+              </div>
+
+              <p className="leading-relaxed">
+                A sala será movida para a <strong>Lixeira</strong>. Os bens cadastrados continuarão no patrimônio geral da unidade. Você poderá <strong>restaurar a sala</strong> a qualquer momento na aba Lixeira em até 7 dias antes do expurgo definitivo.
+              </p>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Motivo da exclusão da sala:
+                </label>
+                <select
+                  value={deleteRoomReason}
+                  onChange={(e) => setDeleteRoomReason(e.target.value)}
+                  className="w-full p-2.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                >
+                  <option value="Sala duplicada ou criada por engano">Sala duplicada ou criada por engano</option>
+                  <option value="Ambiente desativado na unidade">Ambiente desativado na unidade</option>
+                  <option value="Nome incorreto / reconfiguração de setores">Nome incorreto / reconfiguração de setores</option>
+                  <option value="Outro motivo">Outro motivo</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteRoomModal(false)}
+                className="px-4 py-2.5 text-xs font-semibold rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onDeleteSector && activeSector) {
+                    onDeleteSector(activeSector.id || activeSector.nome, deleteRoomReason);
+                    setSelectedSectorId(null);
+                    setShowDeleteRoomModal(false);
+                    setBulkFeedback(`A sala "${activeSector.nome}" foi enviada para a Lixeira com retenção de 7 dias.`);
+                    setTimeout(() => setBulkFeedback(null), 6000);
+                  }
+                }}
+                className="px-4 py-2.5 text-xs font-black rounded-xl bg-rose-600 hover:bg-rose-500 text-white cursor-pointer shadow-lg flex items-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Mover Sala para Lixeira</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Confirmar Exclusão de Bem da Sala */}
+      {assetToDelete && (
+        <div className="fixed inset-0 z-80 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-3xl border-2 border-slate-200 dark:border-slate-800 shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="p-3 rounded-2xl bg-rose-100 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h4 className="text-base font-black">Mover Bem para a Lixeira</h4>
+                <p className="text-xs text-slate-500">Quarentena segura de 7 dias</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300">
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono font-bold text-sm text-slate-900 dark:text-white">{assetToDelete.tombamento}</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700">{assetToDelete.unidadeNome}</span>
+                </div>
+                <p className="font-semibold text-slate-800 dark:text-slate-200">{assetToDelete.descricao}</p>
+                <p className="text-slate-400">Sala: {assetToDelete.setorNome}</p>
+              </div>
+
+              {/* Alerta de Desduplicidade e Proteção de Exemplar Único */}
+              {assetCopiesInSystem <= 1 ? (
+                <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 text-amber-950 dark:text-amber-100 space-y-1.5">
+                  <div className="flex items-center gap-1.5 font-bold text-xs text-amber-800 dark:text-amber-200">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>Atenção: Este é o ÚNICO exemplar deste bem no sistema!</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-amber-900 dark:text-amber-200">
+                    Não existem duplicatas cadastradas no acervo. Se você apagá-lo desta sala achando que é uma duplicata, ele sumirá de <strong>todas as salas</strong> e de todo o inventário geral do consórcio.
+                  </p>
+                  <p className="text-[11px] text-amber-800 dark:text-amber-300 font-medium">
+                    💡 Dica: Se o bem pertence a outra sala ou se a sala apareceu duplicada, não exclua! Use a <strong>"Regra da Desduplicidade"</strong> no topo da página para unificar as salas ou altere a sala do bem.
+                  </p>
+                </div>
+              ) : (
+                <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200 text-xs flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <div>
+                    <span className="font-bold">Confirmado: {assetCopiesInSystem} registros deste tombo na base.</span>
+                    <p className="text-[11px] text-emerald-800 dark:text-emerald-300">Esta exclusão removerá com segurança apenas esta cópia excedente.</p>
+                  </div>
+                </div>
+              )}
+
+              <p className="leading-relaxed">
+                Ao confirmar, o bem será removido e movido para a <strong>Lixeira</strong> (retenção de 7 dias antes do expurgo definitivo). Você poderá restaurá-lo a qualquer momento.
+              </p>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Motivo da exclusão:
+                </label>
+                <select
+                  value={deleteAssetReason}
+                  onChange={(e) => setDeleteAssetReason(e.target.value)}
+                  className="w-full p-2.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                >
+                  <option value="Duplicidade no cadastro da sala">Duplicidade no cadastro da sala</option>
+                  <option value="Tombo cadastrado incorretamente">Tombo cadastrado incorretamente</option>
+                  <option value="Bem inexistente fisicamente">Bem inexistente fisicamente</option>
+                  <option value="Outro motivo">Outro motivo</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setAssetToDelete(null)}
+                className="px-4 py-2.5 text-xs font-semibold rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onDeleteAsset && assetToDelete) {
+                    onDeleteAsset(assetToDelete.id, deleteAssetReason);
+                    setAssetToDelete(null);
+                    setBulkFeedback(`O bem tombo ${assetToDelete.tombamento} foi movido para a Lixeira.`);
+                    setTimeout(() => setBulkFeedback(null), 5000);
+                  }
+                }}
+                className="px-4 py-2.5 text-xs font-black rounded-xl bg-rose-600 hover:bg-rose-500 text-white cursor-pointer shadow-lg flex items-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Mover para Lixeira</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Regra da Desduplicidade Inteligente */}
+      {showDeduplicationModal && (
+        <div className="fixed inset-0 z-80 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-3xl border-2 border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="p-3 rounded-2xl bg-amber-100 text-amber-900 dark:bg-amber-950/80 dark:text-amber-300">
+                  <Sparkles className="w-6 h-6 text-amber-600" />
+                </div>
+                <div>
+                  <h4 className="text-base font-black">Regra da Desduplicidade</h4>
+                  <p className="text-xs text-slate-500">Saneamento automático de salas e bens</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeduplicationModal(false);
+                  setDedupResult(null);
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300">
+              <p className="leading-relaxed">
+                A <strong>Regra da Desduplicidade</strong> resolve o problema em que um mesmo espaço ou bem aparece replicado no sistema:
+              </p>
+
+              <div className="space-y-2">
+                {/* 1. Salas equivalentes */}
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-1">
+                  <div className="flex items-center justify-between font-bold text-slate-900 dark:text-white">
+                    <span className="flex items-center gap-1.5">
+                      <Building2 className="w-4 h-4 text-emerald-500" />
+                      1. Unificação de Salas Equivalentes
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-[10px] font-mono">
+                      {duplicateSectorsCount} duplicadas
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-normal">
+                    Funde salas cadastradas com nomes semelhantes (ex: <code>004 - COPA</code> e <code>COPA</code>). Mantém o código oficial do ASPEC, junta os bens na sala certa e preserva o status de vistoria.
+                  </p>
+                </div>
+
+                {/* 2. Bens duplicados */}
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-1">
+                  <div className="flex items-center justify-between font-bold text-slate-900 dark:text-white">
+                    <span className="flex items-center gap-1.5">
+                      <Layers className="w-4 h-4 text-blue-500" />
+                      2. Desduplicação de Bens Repetidos
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-[10px] font-mono">
+                      {duplicateAssetsCount} cópias
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-normal">
+                    Identifica bens com mesmo tombo importados mais de uma vez. Preserva o bem que já foi conferido na vistoria e descarta as duplicatas redundantes.
+                  </p>
+                </div>
+
+                {/* 3. Restauração de falsas duplicidades da lixeira */}
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-1">
+                  <div className="flex items-center justify-between font-bold text-slate-900 dark:text-white">
+                    <span className="flex items-center gap-1.5">
+                      <RotateCcw className="w-4 h-4 text-amber-500" />
+                      3. Restauração de Bens Apagados por Engano
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[10px] font-mono font-bold">
+                      {falseDuplicatesCount} para resgatar
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-normal">
+                    Se você apagou algum bem de uma sala achando que era cópia, mas ele sumiu de todas as salas, a regra detecta que era o único exemplar e o restaura automaticamente da Lixeira!
+                  </p>
+                </div>
+              </div>
+
+              {dedupResult && (
+                <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-100 space-y-1.5 animate-in fade-in">
+                  <div className="flex items-center gap-2 font-bold text-sm text-emerald-800 dark:text-emerald-200">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                    <span>Regra da Desduplicidade executada com sucesso!</span>
+                  </div>
+                  <ul className="text-xs space-y-1 list-disc list-inside text-emerald-900 dark:text-emerald-200">
+                    <li><strong>{dedupResult.sectorsMerged}</strong> sala(s) duplicada(s) foram unificadas.</li>
+                    <li><strong>{dedupResult.assetsRemoved}</strong> bem(ns) repetido(s) foram desduplicados.</li>
+                    <li><strong>{dedupResult.assetsRestored}</strong> bem(ns) apagado(s) por engano foram restaurados da lixeira.</li>
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeduplicationModal(false);
+                  setDedupResult(null);
+                }}
+                className="px-4 py-2.5 text-xs font-semibold rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 cursor-pointer"
+              >
+                {dedupResult ? 'Fechar' : 'Cancelar'}
+              </button>
+              {onExecuteDeduplicationRule && (
+                <button
+                  type="button"
+                  disabled={isDeduplicating}
+                  onClick={async () => {
+                    setIsDeduplicating(true);
+                    try {
+                      const res = await onExecuteDeduplicationRule();
+                      if (res && typeof res === 'object') {
+                        setDedupResult(res);
+                      } else {
+                        setDedupResult({ assetsRemoved: 0, sectorsMerged: 0, assetsRestored: 0 });
+                      }
+                      setBulkFeedback('Regra da Desduplicidade aplicada com sucesso em todo o sistema!');
+                      setTimeout(() => setBulkFeedback(null), 6000);
+                    } catch (e) {
+                      console.error('Erro ao executar desduplicação:', e);
+                    } finally {
+                      setIsDeduplicating(false);
+                    }
+                  }}
+                  className="px-4 py-2.5 text-xs font-black rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 cursor-pointer shadow-lg flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Sparkles className="w-4 h-4 text-slate-950" />
+                  <span>{isDeduplicating ? 'Executando saneamento...' : 'Executar Desduplicação Automática'}</span>
+                </button>
+              )}
             </div>
           </div>
         </div>

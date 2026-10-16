@@ -10,7 +10,7 @@ import {
   writeBatch,
   getDocFromServer
 } from 'firebase/firestore';
-import { Asset, TransferRequest, ResponsibilityTerm } from '../types';
+import { Asset, TransferRequest, ResponsibilityTerm, TrashedAsset, AssetExit } from '../types';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
@@ -181,13 +181,56 @@ export async function clearAllAssetsFromFirestore(): Promise<void> {
   }
 }
 
-/**
- * Replace entire assets collection in Firestore with new assets
- */
 export async function batchReplaceAssetsInFirestore(newAssets: Asset[]): Promise<void> {
   await clearAllAssetsFromFirestore();
   if (newAssets.length > 0) {
     await batchSaveAssetsToFirestore(newAssets);
+  }
+}
+
+export async function saveTrashedAssetToFirestore(item: TrashedAsset): Promise<void> {
+  const ref = doc(db, 'trash_assets', item.asset.id);
+  await setDoc(ref, item);
+}
+
+export async function deleteTrashedAssetFromFirestore(assetId: string): Promise<void> {
+  const ref = doc(db, 'trash_assets', assetId);
+  await deleteDoc(ref);
+}
+
+export async function fetchAllTrashedAssetsFromFirestore(): Promise<TrashedAsset[]> {
+  try {
+    const colRef = collection(db, 'trash_assets');
+    const snap = await getDocs(colRef);
+    const list: TrashedAsset[] = [];
+    snap.forEach(d => list.push(d.data() as TrashedAsset));
+    return list;
+  } catch (err) {
+    console.warn('Error fetching trashed assets from Firestore:', err);
+    return [];
+  }
+}
+
+export async function saveExitToFirestore(item: AssetExit): Promise<void> {
+  const ref = doc(db, 'asset_exits', item.id);
+  await setDoc(ref, item);
+}
+
+export async function deleteExitFromFirestore(exitId: string): Promise<void> {
+  const ref = doc(db, 'asset_exits', exitId);
+  await deleteDoc(ref);
+}
+
+export async function fetchAllExitsFromFirestore(): Promise<AssetExit[]> {
+  try {
+    const colRef = collection(db, 'asset_exits');
+    const snap = await getDocs(colRef);
+    const list: AssetExit[] = [];
+    snap.forEach(d => list.push(d.data() as AssetExit));
+    return list;
+  } catch (err) {
+    console.warn('Error fetching exits from Firestore:', err);
+    return [];
   }
 }
 

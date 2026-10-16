@@ -20,7 +20,9 @@ import {
   Layers, 
   Cloud,
   X,
-  Map
+  Map,
+  Trash2,
+  ArrowUpRight
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -28,6 +30,8 @@ interface SidebarProps {
   onSelectTab: (tab: NavTab) => void;
   pendingTransfersCount: number;
   totalAssetsCount: number;
+  trashCount?: number;
+  exitsCount?: number;
   onOpenMacroMicroReport: () => void;
   onOpenSmartImport: () => void;
   onOpenQuickScan: () => void;
@@ -47,6 +51,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectTab,
   pendingTransfersCount,
   totalAssetsCount,
+  trashCount = 0,
+  exitsCount = 0,
   onOpenMacroMicroReport,
   onOpenSmartImport,
   onOpenQuickScan,
@@ -110,6 +116,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       iconColor: 'text-indigo-600',
     },
     {
+      id: 'exits' as NavTab,
+      label: 'Saídas (Devolução / Doação)',
+      badge: exitsCount > 0 ? `${exitsCount}` : null,
+      badgeStyle: 'neutral',
+      icon: ArrowUpRight,
+      iconColor: 'text-purple-600',
+    },
+    {
       id: 'saneamento' as NavTab,
       label: 'Plano TCE-CE (Passivo)',
       badge: '13 Anos',
@@ -123,6 +137,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badge: null,
       icon: Scale,
       iconColor: 'text-violet-600',
+    },
+    {
+      id: 'trash' as NavTab,
+      label: 'Lixeira (Quarentena 7d)',
+      badge: trashCount > 0 ? `${trashCount}` : null,
+      badgeStyle: trashCount > 0 ? 'warning' : 'neutral',
+      icon: Trash2,
+      iconColor: 'text-rose-500',
     },
   ];
 

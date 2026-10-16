@@ -10,7 +10,9 @@ import {
   FileText,
   ShieldAlert,
   Scale,
-  Map
+  Map,
+  Trash2,
+  ArrowUpRight
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -63,6 +65,16 @@ const TAB_INFO: Record<NavTab, { title: string; subtitle: string; icon: React.El
     title: 'Legislação & Normas do TCE-CE',
     subtitle: 'Resoluções, decretos estaduais e jurisprudência aplicável',
     icon: Scale,
+  },
+  trash: {
+    title: 'Lixeira Patrimonial',
+    subtitle: 'Quarentena de 7 dias, restauração e exclusão definitiva de bens e salas duplicados',
+    icon: Trash2,
+  },
+  exits: {
+    title: 'Saídas Patrimoniais (Devolução & Doação)',
+    subtitle: 'Registro formal de devoluções a cedentes (SESA/UFC), doações e termos de entrega',
+    icon: ArrowUpRight,
   },
 };
 

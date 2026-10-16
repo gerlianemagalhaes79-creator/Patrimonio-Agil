@@ -21,7 +21,8 @@ import {
   Sparkles,
   ChevronRight,
   Compass,
-  RefreshCw
+  RefreshCw,
+  Trash2
 } from 'lucide-react';
 import { NewLocationModal } from './NewLocationModal';
 import { buildUnitSubareas, getAssetUnitId } from '../utils/locationHelper';
@@ -35,6 +36,7 @@ interface UnitsInteractiveMapProps {
   onNavigateToAuditRoom: (unitId: string, sectorName: string) => void;
   onConcludeRoom: (sectorIdOrName: string) => void;
   onAddNewLocation: (newSector: Sector) => void;
+  onDeleteSector?: (sectorIdOrName: string, reason?: string) => void;
 }
 
 export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
@@ -45,6 +47,7 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
   onNavigateToAuditRoom,
   onConcludeRoom,
   onAddNewLocation,
+  onDeleteSector,
 }) => {
   const [selectedUnitId, setSelectedUnitId] = useState<string>('policlinica');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -54,6 +57,8 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
   const [previewSectorId, setPreviewSectorId] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const [hideEmptyRooms, setHideEmptyRooms] = useState<boolean>(true);
+  const [sectorToDelete, setSectorToDelete] = useState<Sector | null>(null);
+  const [deleteSectorReason, setDeleteSectorReason] = useState<string>('Sala duplicada ou criada por engano');
 
   // Unidade Selecionada
   const activeUnit = units.find(u => u.id === selectedUnitId) || units[0];
@@ -670,6 +675,31 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
                             >
                               <Eye className="w-3.5 h-3.5" />
                             </button>
+
+                            {onDeleteSector && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const fullSector = sectors.find(s => s.id === sector.id || s.nome === sector.nome) || {
+                                    id: sector.id,
+                                    nome: sector.nome,
+                                    sigla: sector.nome.slice(0, 8),
+                                    unidadeId: sector.unidadeId,
+                                    unidadeNome: activeUnit.nome,
+                                    responsavelNome: sector.responsavelNome || 'Geral',
+                                    responsavelCargo: sector.responsavelCargo || 'Detentor',
+                                    responsavelMatricula: 'CPSMS',
+                                    subsetores: [],
+                                  };
+                                  setSectorToDelete(fullSector);
+                                  setDeleteSectorReason('Sala duplicada ou criada por engano');
+                                }}
+                                className="py-1.5 px-2 rounded-lg bg-white dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-rose-600 text-[11px] cursor-pointer transition-colors"
+                                title="Mover sala para a Lixeira"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                              </button>
+                            )}
                           </div>
                         </div>
 
@@ -726,6 +756,78 @@ export const UnitsInteractiveMap: React.FC<UnitsInteractiveMapProps> = ({
           currentProfile={currentProfile}
           defaultUnitId={selectedUnitId}
         />
+      )}
+
+      {/* Modal: Confirmar Exclusão de Sala do Mapa */}
+      {sectorToDelete && (
+        <div className="fixed inset-0 z-80 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-3xl border-2 border-slate-200 dark:border-slate-800 shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="p-3 rounded-2xl bg-rose-100 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h4 className="text-base font-black">Mover Sala para a Lixeira</h4>
+                <p className="text-xs text-slate-500">Quarentena segura de 7 dias</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300">
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1">
+                <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300">
+                  {activeUnit.nome}
+                </span>
+                <h5 className="font-black text-sm text-slate-900 dark:text-white">{sectorToDelete.nome}</h5>
+                <p className="text-slate-400">Responsável: {sectorToDelete.responsavelNome}</p>
+              </div>
+
+              <p className="leading-relaxed">
+                A sala será removida do mapa e movida para a <strong>Lixeira</strong>. Os bens vinculados continuarão no patrimônio geral. A sala poderá ser restaurada a qualquer momento nos próximos 7 dias.
+              </p>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Motivo da exclusão da sala:
+                </label>
+                <select
+                  value={deleteSectorReason}
+                  onChange={(e) => setDeleteSectorReason(e.target.value)}
+                  className="w-full p-2.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                >
+                  <option value="Sala duplicada ou criada por engano">Sala duplicada ou criada por engano</option>
+                  <option value="Ambiente desativado na unidade">Ambiente desativado na unidade</option>
+                  <option value="Nome incorreto / reconfiguração de setores">Nome incorreto / reconfiguração de setores</option>
+                  <option value="Outro motivo">Outro motivo</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSectorToDelete(null)}
+                className="px-4 py-2.5 text-xs font-semibold rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onDeleteSector && sectorToDelete) {
+                    onDeleteSector(sectorToDelete.id || sectorToDelete.nome, deleteSectorReason);
+                    setActionFeedback(`A sala "${sectorToDelete.nome}" foi movida para a Lixeira com quarentena de 7 dias.`);
+                    setTimeout(() => setActionFeedback(null), 5000);
+                    setSectorToDelete(null);
+                  }
+                }}
+                className="px-4 py-2.5 text-xs font-black rounded-xl bg-rose-600 hover:bg-rose-500 text-white cursor-pointer shadow-lg flex items-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Mover Sala para Lixeira</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

@@ -1,7 +1,7 @@
 import React from 'react';
 import { LayoutDashboard, Package, ArrowLeftRight, QrCode, FileText, Scale, ShieldAlert, Map } from 'lucide-react';
 
-export type NavTab = 'dashboard' | 'assets' | 'map' | 'audit' | 'transfers' | 'terms' | 'norms' | 'saneamento';
+export type NavTab = 'dashboard' | 'assets' | 'map' | 'audit' | 'transfers' | 'terms' | 'norms' | 'saneamento' | 'trash' | 'exits';
 
 interface BottomNavigationProps {
   activeTab: NavTab;

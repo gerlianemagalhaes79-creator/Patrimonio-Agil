@@ -86,6 +86,15 @@ export interface Asset {
   statusRegularizacaoAspec?: 'provisorio' | 'oficializado';
   codigoSGPS?: string;
   codigoASPEC?: string;
+  statusSaida?: 'ativo' | 'devolvido' | 'doado' | 'baixa';
+  detalhesSaida?: {
+    tipo: 'devolucao' | 'doacao' | 'baixa_comodato' | 'outra_saida';
+    destinatario: string;
+    processo: string;
+    dataSaida: string;
+    responsavelDestino?: string;
+    motivo?: string;
+  };
   auditoria: AuditRecord;
 }
 
@@ -236,4 +245,44 @@ export interface RoomConferenceDraft {
   bensAtualizadosFisico: RoomDraftAsset[];
   status: 'rascunho_pendente' | 'consolidado_oficial';
   observacaoRascunho?: string;
+}
+
+export interface TrashedAsset {
+  asset: Asset;
+  deletedAt: string; // ISO date string
+  deletedBy?: string;
+  reason?: string;
+}
+
+export interface TrashedSector {
+  sector: Sector;
+  deletedAt: string; // ISO date string
+  deletedBy?: string;
+  reason?: string;
+}
+
+export type ExitType = 'devolucao' | 'doacao' | 'baixa_comodato' | 'outra_saida';
+
+export interface AssetExit {
+  id: string; // Ex: "exit-1729012345"
+  assetId: string;
+  assetTombamento: string;
+  assetTomboOrigemSesa?: string;
+  assetDescricao: string;
+  assetValor: number;
+  assetOrigemTombo: TomboOrigin;
+  assetUnidadeOrigem: string;
+  assetSetorOrigem: string;
+  tipoSaida: ExitType; // 'devolucao' | 'doacao' | 'baixa_comodato' | 'outra_saida'
+  destinatario: string; // Ex: "Secretaria da Saúde do Ceará - SESA" ou "Universidade Federal do Ceará - UFC" ou "Prefeitura..."
+  destinatarioResponsavel?: string; // Nome de quem recebeu / conferiu
+  destinatarioCargo?: string;
+  destinatarioDocumento?: string; // Matrícula, RG ou CPF
+  numeroProcesso: string; // Ex: "OFÍCIO Nº 124/2026 - CPSMS"
+  motivo: string; // Motivo da devolução ou doação
+  dataSaida: string; // Data em que o bem saiu (YYYY-MM-DD ou formato legível)
+  dataRegistro: string; // Timestamp ISO do registro
+  registradoPor: string; // Nome da Gestora
+  status: 'concluida' | 'cancelada';
+  observacoes?: string;
 }

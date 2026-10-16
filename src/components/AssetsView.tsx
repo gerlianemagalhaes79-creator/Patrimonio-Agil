@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Asset, Sector, UnitInfo, UserProfile, AssetCondition, AssetCategory, TomboOrigin } from '../types';
+import { Asset, Sector, UnitInfo, UserProfile, AssetCondition, AssetCategory, TomboOrigin, TrashedAsset } from '../types';
 import { formatBRL, formatDate, exportAssetsToCsv } from '../utils/formatters';
 import { generateBarcodeSvg, generateQrSvg } from '../utils/codeGenerators';
 import { FilteredAssetsReportModal } from './FilteredAssetsReportModal';
 import { AspecOfficializationModal } from './AspecOfficializationModal';
-import { countDuplicateAssets } from '../utils/assetDeduplication';
+import { getAssetDeduplicationKey, countDuplicateAssets, countDuplicateSectors, findFalseDuplicateTrashedAssets } from '../utils/assetDeduplication';
 import { 
   Search, 
   Filter, 
@@ -89,6 +89,9 @@ interface AssetsViewProps {
   onOpenMacroMicroReport?: () => void;
   onClearAllData?: () => Promise<void> | void;
   onDeduplicateAssets?: () => Promise<number | void> | void;
+  onExecuteDeduplicationRule?: () => Promise<{ assetsRemoved: number; sectorsMerged: number; assetsRestored: number } | void> | void;
+  trashAssets?: TrashedAsset[];
+  onDeleteAsset?: (assetId: string, reason?: string) => void;
 }
 
 export const AssetsView: React.FC<AssetsViewProps> = ({
@@ -106,6 +109,9 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
   onOpenMacroMicroReport,
   onClearAllData,
   onDeduplicateAssets,
+  onExecuteDeduplicationRule,
+  trashAssets = [],
+  onDeleteAsset,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSectorId, setSelectedSectorId] = useState<string>('all');
@@ -118,6 +124,15 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
   const [printingPlaqueAsset, setPrintingPlaqueAsset] = useState<Asset | null>(null);
   const [showPrintReportModal, setShowPrintReportModal] = useState<boolean>(false);
   const [assetToOfficialize, setAssetToOfficialize] = useState<Asset | null>(null);
+  const [assetToDelete, setAssetToDelete] = useState<Asset | null>(null);
+  const [deleteReason, setDeleteReason] = useState<string>('Duplicidade no cadastro');
+
+  // Verifica se o bem que o usuário tenta excluir é exemplar único no sistema
+  const assetCopiesInSystem = useMemo(() => {
+    if (!assetToDelete) return 0;
+    const key = getAssetDeduplicationKey(assetToDelete);
+    return assets.filter(a => getAssetDeduplicationKey(a) === key).length;
+  }, [assetToDelete, assets]);
 
   const [showClearAllModal, setShowClearAllModal] = useState(false);
   const [showDeduplicateModal, setShowDeduplicateModal] = useState(false);
@@ -145,13 +160,25 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
   };
 
   const handleConfirmDeduplicate = async () => {
-    if (!onDeduplicateAssets) return;
+    if (!onExecuteDeduplicationRule && !onDeduplicateAssets) return;
     setIsActionProcessing(true);
     try {
-      const removed = await onDeduplicateAssets();
-      setShowDeduplicateModal(false);
-      const countLabel = typeof removed === 'number' ? removed : duplicatesCount;
-      setActionSuccessNotice(`Base desduplicada com sucesso! ${countLabel} bens repetidos foram removidos.`);
+      if (onExecuteDeduplicationRule) {
+        const res = await onExecuteDeduplicationRule();
+        setShowDeduplicateModal(false);
+        const report = res && typeof res === 'object' ? res : { assetsRemoved: 0, sectorsMerged: 0, assetsRestored: 0 };
+        const details = [
+          report.sectorsMerged > 0 ? `${report.sectorsMerged} salas unificadas` : null,
+          `${report.assetsRemoved} bens repetidos removidos`,
+          report.assetsRestored > 0 ? `${report.assetsRestored} bens resgatados da lixeira` : null
+        ].filter(Boolean).join(', ');
+        setActionSuccessNotice(`Regra da Desduplicidade executada com sucesso! (${details}).`);
+      } else if (onDeduplicateAssets) {
+        const removed = await onDeduplicateAssets();
+        setShowDeduplicateModal(false);
+        const countLabel = typeof removed === 'number' ? removed : duplicatesCount;
+        setActionSuccessNotice(`Base desduplicada com sucesso! ${countLabel} bens repetidos foram removidos.`);
+      }
       setTimeout(() => setActionSuccessNotice(null), 7000);
     } catch (err) {
       console.error('Erro ao desduplicar base:', err);
@@ -1239,6 +1266,20 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
                     <ArrowLeftRight className="w-3.5 h-3.5" />
                     <span>Remanejar</span>
                   </button>
+
+                  {onDeleteAsset && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAssetToDelete(asset);
+                        setDeleteReason('Duplicidade no cadastro');
+                      }}
+                      className="flex items-center justify-center p-2 text-slate-400 hover:text-rose-600 bg-white dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer min-h-[44px]"
+                      title="Mover para a Lixeira (apagar bem ou duplicidade)"
+                    >
+                      <Trash2 className="w-4 h-4 text-rose-500" />
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -1364,6 +1405,19 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
                       >
                         Remanejar
                       </button>
+                      {onDeleteAsset && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAssetToDelete(asset);
+                            setDeleteReason('Duplicidade no cadastro');
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-md transition-colors cursor-pointer inline-flex items-center justify-center align-middle"
+                          title="Mover para a Lixeira"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -1830,6 +1884,22 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
                   <ArrowLeftRight className="w-4 h-4" />
                   Solicitar Transferência
                 </button>
+
+                {onDeleteAsset && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ast = inspectingAsset;
+                      setInspectingAsset(null);
+                      setAssetToDelete(ast);
+                      setDeleteReason('Duplicidade no cadastro');
+                    }}
+                    className="px-3.5 py-2 text-xs font-bold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 border border-rose-300 dark:border-rose-800 rounded-lg transition-colors flex items-center gap-1.5 min-h-[44px] cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4 text-rose-600" />
+                    <span>Mover para Lixeira</span>
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -2495,6 +2565,101 @@ export const AssetsView: React.FC<AssetsViewProps> = ({
               >
                 <Sparkles className="w-4 h-4 text-slate-950" />
                 <span>{isActionProcessing ? 'Desduplicando...' : `Confirmar Remoção de ${duplicatesCount} Repetidos`}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal: Mover Bem para a Lixeira */}
+      {assetToDelete && (
+        <div className="fixed inset-0 z-80 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-3xl border-2 border-slate-200 dark:border-slate-800 shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="p-3 rounded-2xl bg-rose-100 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h4 className="text-base font-black">Mover Bem para a Lixeira</h4>
+                <p className="text-xs text-slate-500">Quarentena segura de 7 dias</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300">
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono font-bold text-sm text-slate-900 dark:text-white">{assetToDelete.tombamento}</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700">{assetToDelete.unidadeNome}</span>
+                </div>
+                <p className="font-semibold text-slate-800 dark:text-slate-200">{assetToDelete.descricao}</p>
+                <p className="text-slate-400">Sala: {assetToDelete.setorNome}</p>
+              </div>
+
+              {/* Alerta de Desduplicidade e Salvaguarda de Exemplar Único */}
+              {assetCopiesInSystem <= 1 ? (
+                <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 text-amber-950 dark:text-amber-100 space-y-1.5">
+                  <div className="flex items-center gap-1.5 font-bold text-xs text-amber-800 dark:text-amber-200">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>Atenção: Este é o ÚNICO exemplar deste bem no sistema!</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-amber-900 dark:text-amber-200">
+                    Não existem duplicatas cadastradas no acervo. Se você apagá-lo achando que é uma duplicata, ele sumirá de <strong>todas as salas</strong> e de todo o inventário geral do consórcio.
+                  </p>
+                  <p className="text-[11px] text-amber-800 dark:text-amber-300 font-medium">
+                    💡 Dica: Se o bem pertence a outra sala ou se a sala apareceu clonada, não exclua: use a <strong>"Regra da Desduplicidade"</strong> para unificar salas equivalentes ou transfira o bem.
+                  </p>
+                </div>
+              ) : (
+                <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200 text-xs flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <div>
+                    <span className="font-bold">Confirmado: {assetCopiesInSystem} registros deste tombo na base.</span>
+                    <p className="text-[11px] text-emerald-800 dark:text-emerald-300">Esta exclusão removerá com segurança apenas esta cópia excedente.</p>
+                  </div>
+                </div>
+              )}
+
+              <p className="leading-relaxed">
+                Ao confirmar, o bem será removido da lista ativa e movido para a <strong>Lixeira</strong>. Ele ficará retido em quarentena por <strong>7 dias</strong> antes de qualquer exclusão definitiva, podendo ser restaurado a qualquer momento.
+              </p>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Motivo da exclusão:
+                </label>
+                <select
+                  value={deleteReason}
+                  onChange={(e) => setDeleteReason(e.target.value)}
+                  className="w-full p-2.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                >
+                  <option value="Duplicidade no cadastro">Duplicidade no cadastro / planilha repetida</option>
+                  <option value="Tombo cadastrado incorretamente">Tombo cadastrado incorretamente</option>
+                  <option value="Bem inexistente fisicamente">Bem inexistente fisicamente</option>
+                  <option value="Outro motivo">Outro motivo</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setAssetToDelete(null)}
+                className="px-4 py-2.5 text-xs font-semibold rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onDeleteAsset && assetToDelete) {
+                    onDeleteAsset(assetToDelete.id, deleteReason);
+                    setAssetToDelete(null);
+                  }
+                }}
+                className="px-4 py-2.5 text-xs font-black rounded-xl bg-rose-600 hover:bg-rose-500 text-white cursor-pointer shadow-lg flex items-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Mover para Lixeira</span>
               </button>
             </div>
           </div>

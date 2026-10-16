@@ -107,9 +107,11 @@ export const NewAssetModal: React.FC<NewAssetModalProps> = ({
       descricao: descricao.trim(),
       unidadeId: currentUnit.id,
       unidadeNome: currentUnit.nome,
+      area: currentUnit.nome,
+      subarea: currentSector.nome,
       setorId: currentSector.id,
       setorNome: currentSector.nome,
-      subsetorNome: subsetorNome || currentSector.subsetores[0]?.nome || 'Geral',
+      subsetorNome: subsetorNome || currentSector.subsetores[0]?.nome || currentSector.nome,
       responsavelNome: currentSector.responsavelNome,
       responsavelCargo: currentSector.responsavelCargo,
       responsavelMatricula: currentSector.responsavelMatricula,
@@ -130,6 +132,9 @@ export const NewAssetModal: React.FC<NewAssetModalProps> = ({
         dataConferencia: new Date().toISOString().slice(0, 10),
         responsavelConferencia: 'Gestora de Patrimônio',
         statusDivergencia: 'conforme',
+        unidadeEncontrada: currentUnit.nome,
+        setorEncontrado: currentSector.nome,
+        subsetorEncontrado: currentSector.nome,
         observacaoAuditoria: 'Tombamento registrado na implantação da Gerência de Patrimônio do CPSMS.'
       }
     };

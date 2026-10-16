@@ -66,17 +66,19 @@ export function isUnitName(str?: string): boolean {
  * Identifica a qual unidade um bem pertence com base em unidadeId, unidadeNome e Área (ASPEC)
  */
 export function getAssetUnitId(a: Asset): 'policlinica' | 'ceo' | 'sede-cpsms' | 'cer' {
-  // 1. Verificação explícita por ID
+  // 1. Prioridade máxima: conferência física / auditoria na unidade realizada pelo auditor
+  const uEnc = normalizeLoc(a.auditoria?.unidadeEncontrada);
+  if (uEnc) {
+    if (uEnc.includes('ceo') || uEnc.includes('odonto') || uEnc.includes('004')) return 'ceo';
+    if (uEnc.includes('poli') || uEnc.includes('bernardo') || uEnc.includes('001')) return 'policlinica';
+    if (uEnc.includes('sede') || uEnc.includes('consorcio') || uEnc.includes('002')) return 'sede-cpsms';
+    if (uEnc.includes('cer')) return 'cer';
+  }
+
+  // 2. Verificação explícita por ID
   if (a.unidadeId === 'ceo' || a.unidadeId === 'policlinica' || a.unidadeId === 'sede-cpsms' || a.unidadeId === 'cer') {
     return a.unidadeId;
   }
-
-  // 2. Verificação em auditoria encontrada
-  const uEnc = normalizeLoc(a.auditoria?.unidadeEncontrada);
-  if (uEnc.includes('ceo') || uEnc.includes('odonto') || uEnc.includes('004')) return 'ceo';
-  if (uEnc.includes('poli') || uEnc.includes('bernardo') || uEnc.includes('001')) return 'policlinica';
-  if (uEnc.includes('sede') || uEnc.includes('consorcio') || uEnc.includes('002')) return 'sede-cpsms';
-  if (uEnc.includes('cer')) return 'cer';
 
   // 3. Verificação no texto da Área (ASPEC), Unidade, Setor e Órgão
   const checkText = normalizeLoc(`${a.area || ''} ${a.unidadeNome || ''} ${a.setorOriginalAspec || ''} ${a.unidadeOriginalAspec || ''} ${a.orgao || ''}`);
@@ -216,6 +218,17 @@ export function isExactOrSafePrefixMatch(roomA: string, roomB: string): boolean 
     }
   }
   return false;
+}
+
+/**
+ * Retorna a chave canônica limpa de uma sala (sem números de prefixo como "004 - ").
+ * Exemplo: "004 - COPA" -> "copa", "COPA" -> "copa".
+ */
+export function getCanonicalRoomKey(roomName: string): string {
+  if (!roomName) return '';
+  const norm = normalizeLoc(roomName);
+  const withoutDigits = norm.replace(/^[0-9]+[\s\-_.]*/, '').trim();
+  return withoutDigits || norm;
 }
 
 /**
@@ -516,47 +529,78 @@ export function buildUnitSubareas(
     const isReviewedFromCache = reviewedRoomsMap.has(normKey) || (meta?.id ? reviewedRoomsMap.has(normalizeLoc(meta.id)) : false);
     const isRevisada = Boolean(meta?.revisada || isReviewedFromCache);
 
-    if (!roomsMap.has(normKey)) {
-      const generatedId = meta?.id || `sub-${unitId}-${normKey.replace(/[^a-z0-9]/g, '-')}`;
-      const prefix = unitId === 'ceo' ? 'CEO' : unitId === 'policlinica' ? 'POLI' : 'CPSMS';
-      const cleanAcronym = clean.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase();
+    const canonClean = getCanonicalRoomKey(clean);
 
+    // Regra da Desduplicidade de Salas: Procura se já existe uma sala equivalente na Unidade
+    let existingEntry: UnitSubareaRoom | undefined = roomsMap.get(normKey);
+    let existingKey = normKey;
+
+    if (!existingEntry) {
+      for (const [k, r] of roomsMap.entries()) {
+        const canonR = getCanonicalRoomKey(r.nome);
+        if (canonR === canonClean || isExactOrSafePrefixMatch(r.nome, clean)) {
+          existingEntry = r;
+          existingKey = k;
+          break;
+        }
+      }
+    }
+
+    const matchingBaseSector = baseSectors.find(s => 
+      normalizeLoc(s.nome) === normKey || 
+      getCanonicalRoomKey(s.nome) === canonClean || 
+      (meta?.id && s.id === meta.id)
+    );
+    const finalId = meta?.id || matchingBaseSector?.id || existingEntry?.id || `sub-${unitId}-${normKey.replace(/[^a-z0-9]/g, '-')}`;
+    const prefix = unitId === 'ceo' ? 'CEO' : unitId === 'policlinica' ? 'POLI' : 'CPSMS';
+    const cleanAcronym = clean.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase();
+    const finalSigla = meta?.sigla || matchingBaseSector?.sigla || existingEntry?.sigla || `${prefix}-${cleanAcronym}`;
+    const finalResponsavel = meta?.responsavelNome || matchingBaseSector?.responsavelNome || existingEntry?.responsavelNome || 'Responsável Setorial';
+    const finalCargo = meta?.responsavelCargo || matchingBaseSector?.responsavelCargo || existingEntry?.responsavelCargo;
+    const finalMatricula = meta?.responsavelMatricula || matchingBaseSector?.responsavelMatricula || existingEntry?.responsavelMatricula;
+    const finalBloco = meta?.bloco || matchingBaseSector?.bloco || existingEntry?.bloco;
+    const finalAndar = meta?.andar || matchingBaseSector?.andar || existingEntry?.andar;
+
+    if (!existingEntry) {
       roomsMap.set(normKey, {
-        id: generatedId,
+        id: finalId,
         nome: clean,
-        sigla: meta?.sigla || `${prefix}-${cleanAcronym}`,
+        sigla: finalSigla,
         unidadeId: unitId,
         unidadeNome: baseSectors[0]?.unidadeNome || (unitId === 'ceo' ? 'CEO – Centro de Especialidades Odontológicas' : 'Policlínica'),
-        responsavelNome: meta?.responsavelNome || 'Responsável Setorial',
-        responsavelCargo: meta?.responsavelCargo,
-        responsavelMatricula: meta?.responsavelMatricula,
-        bloco: inferArchitecturalBlock(clean, unitId, meta?.bloco),
-        andar: meta?.andar || 'Térreo',
+        responsavelNome: finalResponsavel,
+        responsavelCargo: finalCargo,
+        responsavelMatricula: finalMatricula,
+        bloco: inferArchitecturalBlock(clean, unitId, finalBloco),
+        andar: finalAndar || 'Térreo',
         revisada: isRevisada,
         macroSetorNome: meta?.macroSetorNome
       });
     } else {
-      // Atualiza status se revisada
+      // Regra de Preservação Oficial: Se o nome atual tem código oficial ASPEC (ex: "004 - COPA") 
+      // e a existente não tinha (ex: "COPA"), promove para o nome oficial!
+      const cleanHasDigits = /^[0-9]+[\s\-_.]/.test(clean);
+      const existingHasDigits = /^[0-9]+[\s\-_.]/.test(existingEntry.nome);
+      if (cleanHasDigits && !existingHasDigits) {
+        existingEntry.nome = clean;
+      }
+      // Garante preservação de ID estável caso venha de baseSectors ou meta oficial
+      if (matchingBaseSector?.id && existingEntry.id !== matchingBaseSector.id) {
+        existingEntry.id = matchingBaseSector.id;
+      } else if (meta?.id && existingEntry.id.startsWith('sub-') && !meta.id.startsWith('sub-')) {
+        existingEntry.id = meta.id;
+      }
+      if (finalSigla && !existingEntry.sigla) existingEntry.sigla = finalSigla;
+      if (finalResponsavel && existingEntry.responsavelNome === 'Responsável Setorial') existingEntry.responsavelNome = finalResponsavel;
+      if (finalCargo && !existingEntry.responsavelCargo) existingEntry.responsavelCargo = finalCargo;
+      if (finalMatricula && !existingEntry.responsavelMatricula) existingEntry.responsavelMatricula = finalMatricula;
       if (isRevisada) {
-        const existing = roomsMap.get(normKey)!;
-        existing.revisada = true;
+        existingEntry.revisada = true;
       }
     }
   };
 
-  // 1. Extrai EXCLUSIVAMENTE as salas / subáreas dos bens que REALMENTE existem na Unidade (NUNCA inventa salas vazias)
-  unitAssets.forEach(a => {
-    const roomName = getAssetRoomName(a);
-    if (roomName && !isUnitName(roomName)) {
-      registerSubarea(roomName, {
-        responsavelNome: a.responsavelNome,
-        responsavelCargo: a.responsavelCargo,
-        responsavelMatricula: a.responsavelMatricula
-      });
-    }
-  });
-
-  // 2. Inclui salas de baseSectors (tanto customizadas quanto pré-existentes da unidade)
+  // 1. Inclui PRIMEIRO todas as salas de baseSectors (novas salas customizadas e salas oficiais da unidade)
   baseSectors.forEach(sec => {
     registerSubarea(sec.nome, {
       id: sec.id,
@@ -568,6 +612,18 @@ export function buildUnitSubareas(
       andar: sec.andar,
       revisada: sec.revisada || reviewedRoomsMap.has(normalizeLoc(sec.nome)) || (sec.id ? reviewedRoomsMap.has(normalizeLoc(sec.id)) : false),
     });
+  });
+
+  // 2. Extrai as salas / subáreas dos bens que existem na Unidade
+  unitAssets.forEach(a => {
+    const roomName = getAssetRoomName(a);
+    if (roomName && !isUnitName(roomName)) {
+      registerSubarea(roomName, {
+        responsavelNome: a.responsavelNome,
+        responsavelCargo: a.responsavelCargo,
+        responsavelMatricula: a.responsavelMatricula
+      });
+    }
   });
 
   // 3. Mapeia os bens para cada subárea e calcula estatísticas em tempo real

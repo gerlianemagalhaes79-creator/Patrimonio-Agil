@@ -10,6 +10,15 @@ service cloud.firestore {
     match /terms/{termId} {
       allow read, write: if true;
     }
+    match /trash_assets/{assetId} {
+      allow read, write: if true;
+    }
+    match /trash_sectors/{sectorId} {
+      allow read, write: if true;
+    }
+    match /asset_exits/{exitId} {
+      allow read, write: if true;
+    }
     match /{document=**} {
       allow read, write: if false;
     }

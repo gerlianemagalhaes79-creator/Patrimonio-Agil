@@ -11,7 +11,10 @@ import {
   TransferRequest, 
   ResponsibilityTerm, 
   UserProfile, 
-  AssetCondition
+  AssetCondition,
+  TrashedAsset,
+  TrashedSector,
+  AssetExit
 } from './types';
 import { 
   CPSMS_SECTORS, 
@@ -31,7 +34,10 @@ import {
 import { 
   getAssetDeduplicationKey, 
   deduplicateAssetsList, 
-  countDuplicateAssets 
+  countDuplicateAssets,
+  deduplicateSectorsList,
+  countDuplicateSectors,
+  findFalseDuplicateTrashedAssets
 } from './utils/assetDeduplication';
 import { 
   testFirebaseConnection,
@@ -43,7 +49,14 @@ import {
   clearAllAssetsFromFirestore,
   batchReplaceAssetsInFirestore,
   saveTransferToFirestore,
-  saveTermToFirestore
+  saveTermToFirestore,
+  deleteAssetFromFirestore,
+  saveTrashedAssetToFirestore,
+  deleteTrashedAssetFromFirestore,
+  fetchAllTrashedAssetsFromFirestore,
+  saveExitToFirestore,
+  deleteExitFromFirestore,
+  fetchAllExitsFromFirestore
 } from './services/firebase';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -55,6 +68,8 @@ import { AuditView } from './components/AuditView';
 import { TermsView } from './components/TermsView';
 import { NormsView } from './components/NormsView';
 import { SaneamentoView } from './components/SaneamentoView';
+import { TrashView } from './components/TrashView';
+import { ExitsView } from './components/ExitsView';
 import { MacroMicroInventoryReportModal } from './components/MacroMicroInventoryReportModal';
 import { NewTransferModal } from './components/NewTransferModal';
 import { NewAssetModal } from './components/NewAssetModal';
@@ -177,11 +192,13 @@ export default function App() {
         }
       }
 
-      return Array.from(map.values());
+      const rawList = Array.from(map.values());
+      const { uniqueSectors } = deduplicateSectorsList(rawList);
+      return uniqueSectors;
     } catch (e) {
       console.warn('Error reading custom sectors from localStorage:', e);
     }
-    return CPSMS_SECTORS;
+    return deduplicateSectorsList(CPSMS_SECTORS).uniqueSectors;
   });
   const [units] = useState<UnitInfo[]>(CPSMS_UNITS);
   const [transfers, setTransfers] = useState<TransferRequest[]>([]);
@@ -205,6 +222,61 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [selectedUnitFilter, setSelectedUnitFilter] = useState<string>('all');
   const [selectedTermIdForView, setSelectedTermIdForView] = useState<string | undefined>();
+
+  // Trash & Quarantine state (7-day safety retention)
+  const [trashAssets, setTrashAssets] = useState<TrashedAsset[]>(() => {
+    try {
+      const saved = localStorage.getItem('cpsms_trash_assets');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const now = Date.now();
+          const valid = parsed.filter((item: TrashedAsset) => {
+            const t = new Date(item.deletedAt).getTime();
+            return now - t < 7 * 24 * 60 * 60 * 1000;
+          });
+          return valid;
+        }
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [trashSectors, setTrashSectors] = useState<TrashedSector[]>(() => {
+    try {
+      const saved = localStorage.getItem('cpsms_trash_sectors');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const now = Date.now();
+          const valid = parsed.filter((item: TrashedSector) => {
+            const t = new Date(item.deletedAt).getTime();
+            return now - t < 7 * 24 * 60 * 60 * 1000;
+          });
+          return valid;
+        }
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Asset Exits state (Devoluções e Doações)
+  const [exits, setExits] = useState<AssetExit[]>(() => {
+    try {
+      const saved = localStorage.getItem('cpsms_asset_exits');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  });
 
   // Modals state
   const [isNewTransferModalOpen, setIsNewTransferModalOpen] = useState(false);
@@ -275,6 +347,43 @@ export default function App() {
         setAssets(effectiveAssets);
         setTransfers(loadedTransfers);
         setTerms(loadedTerms);
+
+        // Sync trashed assets from Firestore
+        fetchAllTrashedAssetsFromFirestore().then(cloudTrash => {
+          if (cloudTrash && cloudTrash.length > 0) {
+            setTrashAssets(prev => {
+              const map = new Map<string, TrashedAsset>();
+              prev.forEach(t => map.set(t.asset.id, t));
+              cloudTrash.forEach(t => map.set(t.asset.id, t));
+              const now = Date.now();
+              const valid = Array.from(map.values()).filter(t => now - new Date(t.deletedAt).getTime() < 7 * 24 * 60 * 60 * 1000);
+              try {
+                localStorage.setItem('cpsms_trash_assets', JSON.stringify(valid));
+              } catch (e) {
+                console.warn(e);
+              }
+              return valid;
+            });
+          }
+        }).catch(e => console.warn('Cloud trash fetch error:', e));
+
+        // Sync exits from Firestore
+        fetchAllExitsFromFirestore().then(cloudExits => {
+          if (cloudExits && cloudExits.length > 0) {
+            setExits(prev => {
+              const map = new Map<string, AssetExit>();
+              prev.forEach(e => map.set(e.id, e));
+              cloudExits.forEach(e => map.set(e.id, e));
+              const merged = Array.from(map.values());
+              try {
+                localStorage.setItem('cpsms_asset_exits', JSON.stringify(merged));
+              } catch (err) {
+                console.warn(err);
+              }
+              return merged;
+            });
+          }
+        }).catch(e => console.warn('Cloud exits fetch error:', e));
       } catch (err) {
         console.error('Error loading from IndexedDB:', err);
       } finally {
@@ -497,7 +606,11 @@ export default function App() {
   };
 
   const handleAddNewAsset = (newAsset: Asset, navigateToAssetsTab = false) => {
-    setAssets(prev => [newAsset, ...prev]);
+    setAssets(prev => {
+      const updated = [newAsset, ...prev];
+      saveAssetsToDB(updated).catch(e => console.warn('IndexedDB asset err:', e));
+      return updated;
+    });
     saveAssetToFirestore(newAsset).catch(e => console.warn('Firestore asset err:', e));
     if (navigateToAssetsTab) {
       setActiveTab('assets');
@@ -505,8 +618,296 @@ export default function App() {
   };
 
   const handleUpdateAsset = (updatedAsset: Asset) => {
-    setAssets(prev => prev.map(a => a.id === updatedAsset.id ? updatedAsset : a));
+    setAssets(prev => {
+      const updated = prev.map(a => a.id === updatedAsset.id ? updatedAsset : a);
+      saveAssetsToDB(updated).catch(e => console.warn('IndexedDB asset err:', e));
+      return updated;
+    });
     saveAssetToFirestore(updatedAsset).catch(e => console.warn('Firestore asset err:', e));
+  };
+
+  // ==========================================
+  // LIXEIRA & QUARENTENA DE SEGURANÇA (7 DIAS)
+  // ==========================================
+  const handleDeleteAsset = (assetId: string, reason?: string) => {
+    const target = assets.find(a => a.id === assetId);
+    if (!target) return;
+
+    const trashed: TrashedAsset = {
+      asset: target,
+      deletedAt: new Date().toISOString(),
+      deletedBy: currentProfile.nome,
+      reason: reason || 'Duplicidade de cadastro / Exclusão manual',
+    };
+
+    // 1. Remove do estado ativo e salva
+    setAssets(prev => {
+      const updated = prev.filter(a => a.id !== assetId);
+      saveAssetsToDB(updated).catch(e => console.warn('IndexedDB delete err:', e));
+      return updated;
+    });
+    deleteAssetFromFirestore(assetId).catch(e => console.warn('Firestore delete err:', e));
+
+    // 2. Adiciona à lixeira
+    setTrashAssets(prev => {
+      const updated = [trashed, ...prev.filter(t => t.asset.id !== assetId)];
+      try {
+        localStorage.setItem('cpsms_trash_assets', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('LocalStorage trash save err:', e);
+      }
+      return updated;
+    });
+    saveTrashedAssetToFirestore(trashed).catch(e => console.warn('Firestore save trash err:', e));
+  };
+
+  const handleRestoreAsset = (assetId: string) => {
+    const trashedItem = trashAssets.find(t => t.asset.id === assetId);
+    if (!trashedItem) return;
+
+    // 1. Remove da lixeira
+    setTrashAssets(prev => {
+      const updated = prev.filter(t => t.asset.id !== assetId);
+      try {
+        localStorage.setItem('cpsms_trash_assets', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('LocalStorage trash save err:', e);
+      }
+      return updated;
+    });
+    deleteTrashedAssetFromFirestore(assetId).catch(e => console.warn('Firestore delete trash err:', e));
+
+    // 2. Retorna para o patrimônio ativo
+    setAssets(prev => {
+      const updated = [trashedItem.asset, ...prev.filter(a => a.id !== assetId)];
+      saveAssetsToDB(updated).catch(e => console.warn('IndexedDB restore err:', e));
+      return updated;
+    });
+    saveAssetToFirestore(trashedItem.asset).catch(e => console.warn('Firestore restore asset err:', e));
+  };
+
+  const handlePermanentlyDeleteAsset = (assetId: string) => {
+    const trashedItem = trashAssets.find(t => t.asset.id === assetId);
+    if (!trashedItem) return;
+    const elapsed = Date.now() - new Date(trashedItem.deletedAt).getTime();
+    if (elapsed < 7 * 24 * 60 * 60 * 1000) {
+      alert('Segurança: Este bem só pode ser excluído definitivamente após 7 dias de quarentena na lixeira.');
+      return;
+    }
+
+    setTrashAssets(prev => {
+      const updated = prev.filter(t => t.asset.id !== assetId);
+      try {
+        localStorage.setItem('cpsms_trash_assets', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('LocalStorage trash err:', e);
+      }
+      return updated;
+    });
+    deleteTrashedAssetFromFirestore(assetId).catch(e => console.warn('Firestore permanent delete err:', e));
+  };
+
+  const handleDeleteSector = (sectorIdOrName: string, reason?: string) => {
+    const norm = normalizeLoc(sectorIdOrName);
+    const target = sectors.find(s => s.id === sectorIdOrName || normalizeLoc(s.nome) === norm);
+    if (!target) return;
+
+    const trashed: TrashedSector = {
+      sector: target,
+      deletedAt: new Date().toISOString(),
+      deletedBy: currentProfile.nome,
+      reason: reason || 'Duplicidade de sala / Exclusão manual',
+    };
+
+    // 1. Remove dos setores ativos
+    setSectors(prev => {
+      const updated = prev.filter(s => s.id !== target.id && normalizeLoc(s.nome) !== norm);
+      try {
+        localStorage.setItem('cpsms_custom_sectors', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('LocalStorage custom sectors err:', e);
+      }
+      return updated;
+    });
+
+    // 2. Adiciona à lixeira
+    setTrashSectors(prev => {
+      const updated = [trashed, ...prev.filter(t => t.sector.id !== target.id)];
+      try {
+        localStorage.setItem('cpsms_trash_sectors', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('LocalStorage trash sectors err:', e);
+      }
+      return updated;
+    });
+  };
+
+  const handleRestoreSector = (sectorId: string) => {
+    const trashedItem = trashSectors.find(t => t.sector.id === sectorId);
+    if (!trashedItem) return;
+
+    // 1. Remove da lixeira
+    setTrashSectors(prev => {
+      const updated = prev.filter(t => t.sector.id !== sectorId);
+      try {
+        localStorage.setItem('cpsms_trash_sectors', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('LocalStorage trash sectors err:', e);
+      }
+      return updated;
+    });
+
+    // 2. Retorna para os setores ativos
+    setSectors(prev => {
+      const updated = [...prev.filter(s => s.id !== sectorId), trashedItem.sector];
+      try {
+        localStorage.setItem('cpsms_custom_sectors', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('LocalStorage restore sector err:', e);
+      }
+      return updated;
+    });
+  };
+
+  const handlePermanentlyDeleteSector = (sectorId: string) => {
+    const trashedItem = trashSectors.find(t => t.sector.id === sectorId);
+    if (!trashedItem) return;
+    const elapsed = Date.now() - new Date(trashedItem.deletedAt).getTime();
+    if (elapsed < 7 * 24 * 60 * 60 * 1000) {
+      alert('Segurança: Esta sala só pode ser excluída definitivamente após 7 dias de quarentena na lixeira.');
+      return;
+    }
+
+    setTrashSectors(prev => {
+      const updated = prev.filter(t => t.sector.id !== sectorId);
+      try {
+        localStorage.setItem('cpsms_trash_sectors', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('LocalStorage trash sectors err:', e);
+      }
+      return updated;
+    });
+  };
+
+  const handlePurgeExpiredTrash = () => {
+    const now = Date.now();
+    const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+
+    const expiredAssets = trashAssets.filter(t => now - new Date(t.deletedAt).getTime() >= SEVEN_DAYS);
+    expiredAssets.forEach(t => {
+      deleteTrashedAssetFromFirestore(t.asset.id).catch(e => console.warn(e));
+    });
+
+    setTrashAssets(prev => {
+      const remaining = prev.filter(t => now - new Date(t.deletedAt).getTime() < SEVEN_DAYS);
+      try {
+        localStorage.setItem('cpsms_trash_assets', JSON.stringify(remaining));
+      } catch (e) {
+        console.warn(e);
+      }
+      return remaining;
+    });
+
+    setTrashSectors(prev => {
+      const remaining = prev.filter(t => now - new Date(t.deletedAt).getTime() < SEVEN_DAYS);
+      try {
+        localStorage.setItem('cpsms_trash_sectors', JSON.stringify(remaining));
+      } catch (e) {
+        console.warn(e);
+      }
+      return remaining;
+    });
+  };
+
+  // ==========================================
+  // SAÍDAS PATRIMONIAIS (DEVOLUÇÃO & DOAÇÃO)
+  // ==========================================
+  const handleCreateExit = (newExitData: Omit<AssetExit, 'id' | 'dataRegistro' | 'status'>) => {
+    const exitId = `exit-${Date.now()}`;
+    const newExit: AssetExit = {
+      ...newExitData,
+      id: exitId,
+      dataRegistro: new Date().toISOString(),
+      status: 'concluida',
+    };
+
+    // 1. Salva saída
+    setExits(prev => {
+      const updated = [newExit, ...prev];
+      try {
+        localStorage.setItem('cpsms_asset_exits', JSON.stringify(updated));
+      } catch (err) {
+        console.warn('LocalStorage exits save err:', err);
+      }
+      return updated;
+    });
+    saveExitToFirestore(newExit).catch(e => console.warn('Firestore exit save err:', e));
+
+    // 2. Atualiza o bem no inventário com a baixa/saída registrada
+    setAssets(prev => {
+      const updated = prev.map(a => {
+        if (a.id === newExit.assetId) {
+          const updatedAsset: Asset = {
+            ...a,
+            statusSaida: newExit.tipoSaida === 'devolucao' ? 'devolvido' : 'doado',
+            detalhesSaida: {
+              tipo: newExit.tipoSaida,
+              destinatario: newExit.destinatario,
+              processo: newExit.numeroProcesso,
+              dataSaida: newExit.dataSaida,
+              responsavelDestino: newExit.destinatarioResponsavel,
+              motivo: newExit.motivo,
+            },
+            auditoria: {
+              ...a.auditoria,
+              conferido: true,
+              statusDivergencia: 'conforme',
+              observacaoAuditoria: `[SAÍDA REGISTRADA - ${newExit.tipoSaida.toUpperCase()}] ${newExit.motivo}. Destinatário: ${newExit.destinatario}. Processo: ${newExit.numeroProcesso}.`,
+            }
+          };
+          saveAssetToFirestore(updatedAsset).catch(e => console.warn('Firestore asset exit update err:', e));
+          return updatedAsset;
+        }
+        return a;
+      });
+      saveAssetsToDB(updated).catch(e => console.warn('IndexedDB asset exit update err:', e));
+      return updated;
+    });
+  };
+
+  const handleCancelExit = (exitId: string) => {
+    const exitItem = exits.find(e => e.id === exitId);
+    if (!exitItem) return;
+
+    // 1. Remove saída
+    setExits(prev => {
+      const updated = prev.filter(e => e.id !== exitId);
+      try {
+        localStorage.setItem('cpsms_asset_exits', JSON.stringify(updated));
+      } catch (err) {
+        console.warn('LocalStorage exit delete err:', err);
+      }
+      return updated;
+    });
+    deleteExitFromFirestore(exitId).catch(e => console.warn('Firestore exit delete err:', e));
+
+    // 2. Reativa o bem no inventário
+    setAssets(prev => {
+      const updated = prev.map(a => {
+        if (a.id === exitItem.assetId) {
+          const reativado: Asset = {
+            ...a,
+            statusSaida: 'ativo',
+            detalhesSaida: undefined,
+          };
+          saveAssetToFirestore(reativado).catch(e => console.warn(e));
+          return reativado;
+        }
+        return a;
+      });
+      saveAssetsToDB(updated).catch(e => console.warn(e));
+      return updated;
+    });
   };
 
   const handleUpdateAudit = (
@@ -865,34 +1266,80 @@ export default function App() {
     }
   };
 
-  const handleDeduplicateAssets = async () => {
+  const handleExecuteDeduplicationRule = async (): Promise<{
+    assetsRemoved: number;
+    sectorsMerged: number;
+    assetsRestored: number;
+  }> => {
     const t0 = performance.now();
     setIsProcessing(true);
     try {
-      // Desduplica rigorosamente usando a biblioteca especializada com preservação de auditoria
-      const { uniqueAssets, removedCount } = deduplicateAssetsList(assets);
+      // 1. Desduplica salas/setores duplicados (ex: "004 - COPA" e "COPA")
+      const { uniqueSectors, removedCount: sectorsMerged } = deduplicateSectorsList(sectors);
+      if (sectorsMerged > 0) {
+        setSectors(uniqueSectors);
+        try {
+          localStorage.setItem('cpsms_custom_sectors', JSON.stringify(uniqueSectors));
+        } catch (e) {
+          console.warn('Erro ao salvar setores desduplicados:', e);
+        }
+      }
 
-      // 1. Salva no IndexedDB
-      await saveAssetsToDB(uniqueAssets);
+      // 2. Desduplica bens patrimoniais preservando conferências
+      const { uniqueAssets, removedCount: assetsRemoved } = deduplicateAssetsList(assets);
 
-      // 2. Substitui no Cloud Firestore
+      // 3. Detecta e restaura bens na lixeira apagados por engano de duplicidade de sala
+      const falseDuplicates = findFalseDuplicateTrashedAssets(uniqueAssets, trashAssets);
+      let assetsRestored = 0;
+      let finalAssets = uniqueAssets;
+
+      if (falseDuplicates.length > 0) {
+        const falseIds = new Set(falseDuplicates.map(f => f.asset.id));
+        const restoredList = falseDuplicates.map(f => f.asset);
+        finalAssets = [...restoredList, ...uniqueAssets];
+        assetsRestored = falseDuplicates.length;
+
+        setTrashAssets(prev => {
+          const updated = prev.filter(t => !falseIds.has(t.asset.id));
+          try {
+            localStorage.setItem('cpsms_trash_assets', JSON.stringify(updated));
+          } catch (e) {
+            console.warn('Erro ao atualizar lixeira:', e);
+          }
+          return updated;
+        });
+
+        falseDuplicates.forEach(f => {
+          deleteTrashedAssetFromFirestore(f.asset.id).catch(e => console.warn('Firestore trash delete err:', e));
+        });
+      }
+
+      // 4. Salva no IndexedDB
+      await saveAssetsToDB(finalAssets);
+
+      // 5. Substitui no Cloud Firestore
       if (firebaseStatus === 'connected') {
         try {
-          await batchReplaceAssetsInFirestore(uniqueAssets);
+          await batchReplaceAssetsInFirestore(finalAssets);
         } catch (fErr) {
           console.warn('Aviso ao sincronizar no Firestore:', fErr);
         }
       }
 
-      setAssets(uniqueAssets);
-      return removedCount;
+      setAssets(finalAssets);
+      return { assetsRemoved, sectorsMerged, assetsRestored };
     } catch (err) {
-      console.error('Erro ao desduplicar base:', err);
-      return 0;
+      console.error('Erro ao executar regra da desduplicidade:', err);
+      return { assetsRemoved: 0, sectorsMerged: 0, assetsRestored: 0 };
     } finally {
       setIsProcessing(false);
       setLastQueryDurationMs(Math.max(5, Math.round(performance.now() - t0)));
     }
+  };
+
+  const handleDeduplicateAssets = async () => {
+    const res = await handleExecuteDeduplicationRule();
+    return res.assetsRemoved;
   };
 
   const handleResetAllAuditsToCleanSlate = async () => {
@@ -985,6 +1432,8 @@ export default function App() {
         onSelectTab={setActiveTab}
         pendingTransfersCount={pendingTransfersCount}
         totalAssetsCount={assets.length}
+        trashCount={trashAssets.length + trashSectors.length}
+        exitsCount={exits.filter(e => e.status === 'concluida').length}
         onOpenMacroMicroReport={() => {
           setInitialMacroForReport('all');
           setIsMacroMicroReportOpen(true);
@@ -1058,6 +1507,7 @@ export default function App() {
             }}
             onConcludeRoom={handleConcludeRoom}
             onAddNewLocation={handleAddNewLocation}
+            onDeleteSector={handleDeleteSector}
           />
         )}
 
@@ -1083,6 +1533,9 @@ export default function App() {
             }}
             onClearAllData={handleClearAllData}
             onDeduplicateAssets={handleDeduplicateAssets}
+            onExecuteDeduplicationRule={handleExecuteDeduplicationRule}
+            trashAssets={trashAssets}
+            onDeleteAsset={handleDeleteAsset}
           />
         )}
 
@@ -1124,6 +1577,11 @@ export default function App() {
             onUpdateSector={handleUpdateSector}
             onAddNewLocation={handleAddNewLocation}
             onResetAllAudits={handleResetAllAuditsToCleanSlate}
+            onDeleteAsset={handleDeleteAsset}
+            onDeleteSector={handleDeleteSector}
+            onExecuteDeduplicationRule={handleExecuteDeduplicationRule}
+            trashAssets={trashAssets}
+            onNavigateToTrash={() => setActiveTab('trash')}
           />
         )}
 
@@ -1154,6 +1612,33 @@ export default function App() {
             onNavigateToAudit={() => setActiveTab('audit')}
             onUpdateAsset={handleUpdateAsset}
             onAddAsset={handleAddNewAsset}
+          />
+        )}
+
+        {activeTab === 'trash' && (
+          <TrashView
+            trashAssets={trashAssets}
+            trashSectors={trashSectors}
+            activeAssets={assets}
+            currentProfile={currentProfile}
+            onRestoreAsset={handleRestoreAsset}
+            onPermanentlyDeleteAsset={handlePermanentlyDeleteAsset}
+            onRestoreSector={handleRestoreSector}
+            onPermanentlyDeleteSector={handlePermanentlyDeleteSector}
+            onPurgeExpiredTrash={handlePurgeExpiredTrash}
+            onExecuteDeduplicationRule={handleExecuteDeduplicationRule}
+          />
+        )}
+
+        {activeTab === 'exits' && (
+          <ExitsView
+            exits={exits}
+            assets={assets}
+            units={units}
+            sectors={sectors}
+            currentProfile={currentProfile}
+            onCreateExit={handleCreateExit}
+            onCancelExit={handleCancelExit}
           />
         )}
         </main>
