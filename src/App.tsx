@@ -80,6 +80,15 @@ import { SmartImportModal } from './components/SmartImportModal';
 import { UnitsInteractiveMap } from './components/UnitsInteractiveMap';
 import { doesAssetMatchRoom, normalizeLoc } from './utils/locationHelper';
 
+// Identificadores dos 27 bens de demonstração inicial para expurgo definitivo
+const DEMO_ASSET_IDS = new Set([
+  'asset-1847', 'asset-2010', 'asset-1755', 'asset-1780', 'asset-2115', 'asset-1990',
+  'asset-1620', 'asset-1635', 'asset-1580', 'asset-1592', 'asset-1830', 'asset-1831',
+  'asset-2201', 'asset-2202', 'asset-2210', 'asset-2215', 'asset-2230', 'asset-2235',
+  'asset-2240', 'asset-2180', 'asset-2185', 'asset-2260', 'asset-2275', 'asset-1910',
+  'asset-1915', 'asset-1900', 'asset-1901'
+]);
+
 export default function App() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [sectors, setSectors] = useState<Sector[]>(() => {
@@ -315,8 +324,15 @@ export default function App() {
         const CLEAN_RESET_KEY = 'patrimonio_cpsms_clean_reset_v3';
         const isCleanResetDone = localStorage.getItem(CLEAN_RESET_KEY) === 'done';
         const isExplicitlyCleared = localStorage.getItem('patrimonio_cpsms_explicitly_cleared') === 'true';
+        const hasUserData = localStorage.getItem('patrimonio_cpsms_has_user_data') === 'true';
 
-        let effectiveAssets = loadedAssets;
+        // 0. EXPURGO DEFINITIVO DOS 27 BENS DE DEMONSTRAÇÃO DO SISTEMA
+        const cleanLoadedAssets = (loadedAssets || []).filter(a => !DEMO_ASSET_IDS.has(a.id));
+        if (cleanLoadedAssets.length !== (loadedAssets || []).length) {
+          saveAssetsToDB(cleanLoadedAssets).catch(console.warn);
+        }
+
+        let effectiveAssets = cleanLoadedAssets;
 
         // 1. Identifica e lê todos os IDs de bens que estão na lixeira para NUNCA permitir que reapareçam no mapa ou no acervo ativo
         let currentTrashIds = new Set<string>();
@@ -334,41 +350,14 @@ export default function App() {
           console.warn('Erro ao ler lixeira no startup:', e);
         }
 
-        if (isExplicitlyCleared && (!loadedAssets || loadedAssets.length === 0)) {
+        if (isExplicitlyCleared || cleanLoadedAssets.length === 0) {
           effectiveAssets = [];
-        } else if (!isCleanResetDone) {
-          // RESET CLEAN SLATE: Start completely pending with genuine assets (zero fake conferences)
-          effectiveAssets = INITIAL_ASSETS
-            .filter(a => !currentTrashIds.has(a.id))
-            .map(a => ({
-              ...a,
-              auditoria: {
-                conferido: false
-              }
-            }));
-          saveAssetsToDB(effectiveAssets).catch(console.warn);
-          localStorage.setItem(CLEAN_RESET_KEY, 'done');
-        } else if (!isExplicitlyCleared && (!effectiveAssets || effectiveAssets.length <= 1) && INITIAL_ASSETS.length > 1) {
-          effectiveAssets = INITIAL_ASSETS.filter(a => !currentTrashIds.has(a.id));
-          saveAssetsToDB(effectiveAssets).catch(console.warn);
-        } else if (Array.isArray(effectiveAssets) && effectiveAssets.length > 1) {
-          // Garante que bens na lixeira sejam expurgados imediatamente se ainda constarem no IndexedDB
-          if (currentTrashIds.size > 0) {
-            effectiveAssets = effectiveAssets.filter(a => !currentTrashIds.has(a.id));
-          }
-          // Garante que bens oficiais de novas salas sejam mesclados, mas NUNCA ressuscita bens que estão na lixeira!
-          const existingIds = new Set(effectiveAssets.map(a => a.id));
-          const existingTombos = new Set(effectiveAssets.map(a => (a.tombamento || '').toString().trim()));
-          const missingAssets = INITIAL_ASSETS.filter(a => {
-            const tombo = (a.tombamento || '').toString().trim();
-            const isTrashed = currentTrashIds.has(a.id);
-            return !isTrashed && !existingIds.has(a.id) && (!tombo || !existingTombos.has(tombo));
-          });
-          if (missingAssets.length > 0) {
-            effectiveAssets = [...effectiveAssets, ...missingAssets];
-            saveAssetsToDB(effectiveAssets).catch(console.warn);
-          }
+        } else {
+          // Mantém os bens legítimos importados pelo usuário
+          effectiveAssets = cleanLoadedAssets.filter(a => !currentTrashIds.has(a.id));
+          localStorage.setItem('patrimonio_cpsms_has_user_data', 'true');
         }
+        localStorage.setItem(CLEAN_RESET_KEY, 'done');
         localAssets = effectiveAssets;
         setAssets(effectiveAssets);
         setTransfers(loadedTransfers);
@@ -488,7 +477,14 @@ export default function App() {
               return true;
             });
 
-            const { uniqueAssets } = deduplicateAssetsList(nonTrashedCloudAssets);
+            const nonDemoCloudAssets = nonTrashedCloudAssets.filter(a => !DEMO_ASSET_IDS.has(a.id));
+            const { uniqueAssets } = deduplicateAssetsList(nonDemoCloudAssets);
+            // Se os dados locais contêm mais bens (ex: importação local recém-concluída) do que a nuvem, sincroniza para a nuvem em vez de apagar os dados locais!
+            if (localAssets.length > uniqueAssets.length && localAssets.length > 0) {
+              console.log('Dados locais possuem mais bens do que a nuvem. Preservando bens locais e atualizando nuvem...');
+              batchSaveAssetsToFirestore(localAssets).catch(console.warn);
+              return;
+            }
             setAssets(uniqueAssets);
             saveAssetsToDB(uniqueAssets);
           } else if (!initialAssetsCheckDone && localAssets.length > 0) {
@@ -759,11 +755,6 @@ export default function App() {
   const handlePermanentlyDeleteAsset = (assetId: string) => {
     const trashedItem = trashAssets.find(t => t.asset.id === assetId);
     if (!trashedItem) return;
-    const elapsed = Date.now() - new Date(trashedItem.deletedAt).getTime();
-    if (elapsed < 7 * 24 * 60 * 60 * 1000) {
-      alert('Segurança: Este bem só pode ser excluído definitivamente após 7 dias de quarentena na lixeira.');
-      return;
-    }
 
     setTrashAssets(prev => {
       const updated = prev.filter(t => t.asset.id !== assetId);
@@ -842,11 +833,6 @@ export default function App() {
   const handlePermanentlyDeleteSector = (sectorId: string) => {
     const trashedItem = trashSectors.find(t => t.sector.id === sectorId);
     if (!trashedItem) return;
-    const elapsed = Date.now() - new Date(trashedItem.deletedAt).getTime();
-    if (elapsed < 7 * 24 * 60 * 60 * 1000) {
-      alert('Segurança: Esta sala só pode ser excluída definitivamente após 7 dias de quarentena na lixeira.');
-      return;
-    }
 
     setTrashSectors(prev => {
       const updated = prev.filter(t => t.sector.id !== sectorId);
@@ -856,6 +842,23 @@ export default function App() {
         console.warn('LocalStorage trash sectors err:', e);
       }
       return updated;
+    });
+  };
+
+  const handleEmptyAllTrash = () => {
+    const assetIds = trashAssets.map(t => t.asset.id);
+
+    setTrashAssets([]);
+    setTrashSectors([]);
+    try {
+      localStorage.setItem('cpsms_trash_assets', JSON.stringify([]));
+      localStorage.setItem('cpsms_trash_sectors', JSON.stringify([]));
+    } catch (e) {
+      console.warn('LocalStorage trash clear err:', e);
+    }
+
+    assetIds.forEach(id => {
+      deleteTrashedAssetFromFirestore(id).catch(() => {});
     });
   };
 
@@ -1566,6 +1569,8 @@ export default function App() {
     try {
       // 1. Limpa imediatamente a flag de base apagada para que o sistema reconheça a nova planilha
       localStorage.removeItem('patrimonio_cpsms_explicitly_cleared');
+      localStorage.setItem('patrimonio_cpsms_has_user_data', 'true');
+      localStorage.setItem('patrimonio_cpsms_clean_reset_v3', 'done');
 
       // 2. Desduplica os itens dentro da própria planilha importada
       const { uniqueAssets: uniqueImported } = deduplicateAssetsList(importedList);
@@ -1812,6 +1817,7 @@ export default function App() {
             onRestoreSector={handleRestoreSector}
             onPermanentlyDeleteSector={handlePermanentlyDeleteSector}
             onPurgeExpiredTrash={handlePurgeExpiredTrash}
+            onEmptyAllTrash={handleEmptyAllTrash}
             onExecuteDeduplicationRule={handleExecuteDeduplicationRule}
             onRestoreFalseDuplicates={handleRestoreFalseDuplicates}
           />

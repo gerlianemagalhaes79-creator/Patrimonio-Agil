@@ -26,6 +26,7 @@ interface TrashViewProps {
   onRestoreSector: (sectorId: string) => void;
   onPermanentlyDeleteSector: (sectorId: string) => void;
   onPurgeExpiredTrash: () => void;
+  onEmptyAllTrash?: () => void;
   onExecuteDeduplicationRule?: () => Promise<{ assetsRemoved: number; sectorsMerged: number; assetsRestored: number } | void> | void;
   onRestoreFalseDuplicates?: () => Promise<number | void> | void;
 }
@@ -42,6 +43,7 @@ export const TrashView: React.FC<TrashViewProps> = ({
   onRestoreSector,
   onPermanentlyDeleteSector,
   onPurgeExpiredTrash,
+  onEmptyAllTrash,
   onExecuteDeduplicationRule,
   onRestoreFalseDuplicates,
 }) => {
@@ -49,6 +51,7 @@ export const TrashView: React.FC<TrashViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [isExecutingDedup, setIsExecutingDedup] = useState(false);
   const [selectedAssetDetail, setSelectedAssetDetail] = useState<TrashedAsset | null>(null);
+  const [showConfirmEmptyAll, setShowConfirmEmptyAll] = useState(false);
   const [confirmPermanentDeleteModal, setConfirmPermanentDeleteModal] = useState<{
     type: 'asset' | 'sector';
     id: string;
@@ -147,10 +150,6 @@ export const TrashView: React.FC<TrashViewProps> = ({
 
   const executePermanentDelete = () => {
     if (!confirmPermanentDeleteModal) return;
-    if (confirmPermanentDeleteModal.daysRemaining > 0) {
-      // Security block: cannot delete yet
-      return;
-    }
     if (confirmPermanentDeleteModal.type === 'asset') {
       onPermanentlyDeleteAsset(confirmPermanentDeleteModal.id);
     } else {
@@ -175,22 +174,33 @@ export const TrashView: React.FC<TrashViewProps> = ({
               </h2>
             </div>
             <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-              Itens apagados (bens ou salas em duplicidade) permanecem em segurança na lixeira.
-              Você pode <strong className="text-emerald-400 font-bold">restaurar</strong> qualquer item a qualquer momento.
-              Conforme a regra de proteção, a <strong className="text-rose-400 font-bold">exclusão definitiva</strong> é liberada após <strong className="text-amber-300 font-bold">1 semana (7 dias)</strong> de permanência, prevenindo perda acidental de dados.
+              Itens apagados permanecem em quarentena de segurança. Você pode <strong className="text-emerald-400 font-bold">restaurar</strong> qualquer item para o patrimônio ativo ou clicar em <strong className="text-rose-400 font-bold">Apagar Definitivo</strong> para expurgá-lo permanentemente da base.
             </p>
           </div>
 
-          {totalExpiredCount > 0 && (
-            <button
-              type="button"
-              onClick={onPurgeExpiredTrash}
-              className="px-4 py-3 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs sm:text-sm transition-all shadow-lg flex items-center gap-2 shrink-0 cursor-pointer hover:scale-102 active:scale-98"
-            >
-              <Trash2 className="w-4 h-4" />
-              <span>Limpar {totalExpiredCount} Item(ns) Vencidos (&gt; 7 dias)</span>
-            </button>
-          )}
+          <div className="flex items-center gap-2 flex-wrap shrink-0">
+            {totalTrashCount > 0 && onEmptyAllTrash && (
+              <button
+                type="button"
+                onClick={() => setShowConfirmEmptyAll(true)}
+                className="px-4 py-3 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs sm:text-sm transition-all shadow-lg flex items-center gap-2 cursor-pointer hover:scale-102 active:scale-98"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Esvaziar Toda a Lixeira ({totalTrashCount})</span>
+              </button>
+            )}
+
+            {totalExpiredCount > 0 && (
+              <button
+                type="button"
+                onClick={onPurgeExpiredTrash}
+                className="px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs sm:text-sm transition-all shadow-lg flex items-center gap-2 cursor-pointer hover:scale-102 active:scale-98"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Limpar Vencidos ({totalExpiredCount})</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -423,15 +433,11 @@ export const TrashView: React.FC<TrashViewProps> = ({
                         <button
                           type="button"
                           onClick={() => handleAttemptPermanentDelete('sector', s.id, s.nome, item.deletedAt)}
-                          className={`px-3 py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors ${
-                            status.isExpired
-                              ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-xs'
-                              : 'bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-600 border border-slate-200 dark:border-slate-700'
-                          }`}
-                          title={status.isExpired ? 'Excluir definitivamente do sistema' : `Disponível apenas após 7 dias (faltam ${status.daysRemaining} dias)`}
+                          className="px-3.5 py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors bg-rose-600 hover:bg-rose-500 text-white shadow-xs active:scale-95"
+                          title="Excluir definitivamente da base de dados"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
-                          <span>{status.isExpired ? 'Excluir Definitivo' : 'Exclusão Bloqueada (7d)'}</span>
+                          <span>Apagar Definitivo</span>
                         </button>
                       </div>
                     </div>
@@ -529,15 +535,11 @@ export const TrashView: React.FC<TrashViewProps> = ({
                             <button
                               type="button"
                               onClick={() => handleAttemptPermanentDelete('asset', a.id, `${a.tombamento} - ${a.descricao}`, item.deletedAt)}
-                              className={`px-3.5 py-2.5 rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors ${
-                                status.isExpired
-                                  ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-xs'
-                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-600 border border-slate-200 dark:border-slate-700'
-                              }`}
-                              title={status.isExpired ? 'Excluir definitivamente da base de dados' : `Disponível apenas após 7 dias de quarentena (faltam ${status.daysRemaining} dias)`}
+                              className="px-3.5 py-2.5 rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors bg-rose-600 hover:bg-rose-500 text-white shadow-xs active:scale-95"
+                              title="Excluir definitivamente da base de dados"
                             >
                               <Trash2 className="w-4 h-4" />
-                              <span>{status.isExpired ? 'Excluir Definitivo' : 'Bloqueado (7d)'}</span>
+                              <span>Apagar Definitivo</span>
                             </button>
                           </div>
                         </div>
@@ -551,17 +553,17 @@ export const TrashView: React.FC<TrashViewProps> = ({
         </div>
       )}
 
-      {/* Confirmation / Safety Modal for Permanent Delete */}
+      {/* Confirmation Modal for Single Permanent Delete */}
       {confirmPermanentDeleteModal && (
         <div className="fixed inset-0 z-80 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
           <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-3xl border-2 border-slate-200 dark:border-slate-800 shadow-2xl max-w-md w-full p-6 space-y-4">
             <div className="flex items-center gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
-              <div className={`p-3 rounded-2xl ${confirmPermanentDeleteModal.daysRemaining > 0 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
-                {confirmPermanentDeleteModal.daysRemaining > 0 ? <AlertTriangle className="w-6 h-6" /> : <Trash2 className="w-6 h-6" />}
+              <div className="p-3 rounded-2xl bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300">
+                <Trash2 className="w-6 h-6" />
               </div>
               <div>
                 <h4 className="text-base font-black">
-                  {confirmPermanentDeleteModal.daysRemaining > 0 ? 'Exclusão Bloqueada por Segurança' : 'Confirmar Exclusão Definitiva'}
+                  Confirmar Exclusão Definitiva
                 </h4>
                 <p className="text-xs text-slate-500">
                   {confirmPermanentDeleteModal.type === 'asset' ? 'Bem Patrimonial' : 'Sala / Setor'}
@@ -569,35 +571,16 @@ export const TrashView: React.FC<TrashViewProps> = ({
               </div>
             </div>
 
-            {confirmPermanentDeleteModal.daysRemaining > 0 ? (
-              <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 font-medium">
-                  ⏳ <strong>Regra de Proteção de 7 Dias (1 Semana):</strong>
-                  <br />
-                  Este item está em quarentena de segurança. A exclusão definitiva no banco de dados só pode ser realizada após completados 7 dias da exclusão inicial.
-                </div>
-                <p>
-                  Item selecionado: <strong>{confirmPermanentDeleteModal.name}</strong>
-                </p>
-                <p>
-                  Tempo restante de quarentena: <strong className="text-amber-600 font-bold">{confirmPermanentDeleteModal.daysRemaining} dia(s)</strong>.
-                </p>
-                <p className="text-slate-400">
-                  Caso tenha excluído este item por engano, você pode clicar em <strong>"Restaurar"</strong> para reativá-lo imediatamente no sistema.
-                </p>
+            <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200 font-medium">
+                🚨 <strong>Atenção: Ação Irreversível!</strong>
+                <br />
+                Ao confirmar, este item será permanentemente apagado da base de dados e não poderá mais ser recuperado.
               </div>
-            ) : (
-              <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200 font-medium">
-                  🚨 <strong>Atenção: Ação Irreversível!</strong>
-                  <br />
-                  O prazo de 7 dias de quarentena já foi cumprido. Ao confirmar, o registro será permanentemente apagado da base de dados e não poderá mais ser recuperado.
-                </div>
-                <p>
-                  Tem certeza que deseja apagar definitivamente <strong>"{confirmPermanentDeleteModal.name}"</strong>?
-                </p>
-              </div>
-            )}
+              <p>
+                Deseja apagar definitivamente agora: <strong>"{confirmPermanentDeleteModal.name}"</strong>?
+              </p>
+            </div>
 
             <div className="pt-2 flex items-center justify-end gap-2">
               <button
@@ -605,18 +588,69 @@ export const TrashView: React.FC<TrashViewProps> = ({
                 onClick={() => setConfirmPermanentDeleteModal(null)}
                 className="px-4 py-2.5 text-xs font-semibold rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 cursor-pointer"
               >
-                {confirmPermanentDeleteModal.daysRemaining > 0 ? 'Entendido' : 'Cancelar'}
+                Cancelar
               </button>
 
-              {confirmPermanentDeleteModal.daysRemaining === 0 && (
-                <button
-                  type="button"
-                  onClick={executePermanentDelete}
-                  className="px-4 py-2.5 text-xs font-black rounded-xl bg-rose-600 hover:bg-rose-500 text-white cursor-pointer shadow-lg"
-                >
-                  Excluir Definitivamente
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={executePermanentDelete}
+                className="px-4 py-2.5 text-xs font-black rounded-xl bg-rose-600 hover:bg-rose-500 text-white cursor-pointer shadow-lg active:scale-95"
+              >
+                Sim, Apagar Definitivamente
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Empty All Trash */}
+      {showConfirmEmptyAll && (
+        <div className="fixed inset-0 z-80 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-3xl border-2 border-rose-300 dark:border-rose-800 shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="p-3 rounded-2xl bg-rose-600 text-white">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h4 className="text-base font-black text-rose-600 dark:text-rose-400">
+                  Esvaziar Toda a Lixeira
+                </h4>
+                <p className="text-xs text-slate-500">
+                  Limpeza total de {totalTrashCount} item(ns) em quarentena
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200 font-medium">
+                ⚠️ <strong>Atenção: Ação Irreversível!</strong>
+                <br />
+                Todos os <strong>{totalTrashCount} itens</strong> atualmente na lixeira serão permanentemente eliminados da base de dados e da memória.
+              </div>
+              <p>
+                Tem certeza que deseja apagar definitivamente todos os registros da lixeira agora?
+              </p>
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowConfirmEmptyAll(false)}
+                className="px-4 py-2.5 text-xs font-semibold rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 cursor-pointer"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  onEmptyAllTrash?.();
+                  setShowConfirmEmptyAll(false);
+                }}
+                className="px-4 py-2.5 text-xs font-black rounded-xl bg-rose-600 hover:bg-rose-500 text-white cursor-pointer shadow-lg active:scale-95"
+              >
+                Sim, Esvaziar Tudo Agora
+              </button>
             </div>
           </div>
         </div>

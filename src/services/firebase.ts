@@ -20,17 +20,22 @@ export const db = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestore
   ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
   : getFirestore(app);
 
-// Connection test as required by Firebase skill
 export async function testFirebaseConnection(): Promise<boolean> {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
     return true;
   } catch (error: any) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn("Firebase client offline:", error.message);
+    if (
+      error?.code === 'resource-exhausted' ||
+      error?.code === 'unavailable' ||
+      error?.message?.includes('Quota') ||
+      error?.message?.includes('quota') ||
+      error?.message?.includes('offline')
+    ) {
+      console.warn("Firebase indisponível ou cota excedida:", error.message || error.code);
       return false;
     }
-    // Document not existing is normal and means server responded
+    // Se for erro de documento não existente, significa que a conexão está ativa
     return true;
   }
 }
