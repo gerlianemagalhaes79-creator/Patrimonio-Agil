@@ -926,10 +926,28 @@ export const AuditView: React.FC<AuditViewProps> = ({
       return;
     }
 
+    // Se o usuário marcou bem sem plaqueta ou o tombo digitado é gerado/sem-tombo, NUNCA busca correspondência em outros setores!
+    if (
+      roomNewSemPlaqueta ||
+      cleanT.startsWith('sem-tombo') ||
+      cleanT.startsWith('fora-aspec') ||
+      cleanT.startsWith('tombo-') ||
+      cleanT === 's/n' ||
+      cleanT === 'sn' ||
+      cleanT === '-'
+    ) {
+      setMatchedExistingAsset(null);
+      return;
+    }
+
     const digitsT = cleanT.replace(/\D/g, '');
     const digitsS = cleanS.replace(/\D/g, '');
 
     const match = assets.find(a => {
+      // Ignora itens que também sejam sem tombo ou de prefixo gerado
+      const aTomboClean = a.tombamento.toLowerCase();
+      if (aTomboClean.startsWith('sem-tombo') || aTomboClean.startsWith('fora-aspec')) return false;
+
       const tVal = a.tombamento.toLowerCase();
       const cVal = (a.tomboConsorcio || '').toLowerCase();
       const sVal = (a.tomboSesa || a.tomboOrigemSesa || '').toLowerCase();
@@ -937,28 +955,28 @@ export const AuditView: React.FC<AuditViewProps> = ({
       const fVal = (a.tomboFcpc || '').toLowerCase();
       const oVal = (a.outrosTombos || a.tomboSecundario || '').toLowerCase();
 
-      // Direct string matches
-      const matchesT = cleanT && (tVal === cleanT || cVal === cleanT || sVal === cleanT || uVal === cleanT || fVal === cleanT || oVal === cleanT);
-      const matchesS = cleanS && (sVal === cleanS || tVal === cleanS);
+      // Direct string matches (apenas se tiver pelo menos 2 caracteres e não for genérico)
+      const matchesT = cleanT && cleanT.length >= 2 && (tVal === cleanT || cVal === cleanT || sVal === cleanT || uVal === cleanT || fVal === cleanT || oVal === cleanT);
+      const matchesS = cleanS && cleanS.length >= 2 && (sVal === cleanS || tVal === cleanS);
       if (matchesT || matchesS) return true;
 
-      // Numeric digit matching (e.g., '0184' matches '184', 'CPSMS-0184', etc.)
-      if (digitsT && digitsT.length >= 2) {
+      // Numeric digit matching (ex: "0184" bate com "184", "CPSMS-0184") - EXIGE NO MÍNIMO 3 DÍGITOS
+      if (digitsT && digitsT.length >= 3) {
         const tDig = tVal.replace(/\D/g, '');
         const cDig = cVal.replace(/\D/g, '');
         const sDig = sVal.replace(/\D/g, '');
-        if ((tDig && (tDig === digitsT || parseInt(tDig, 10) === parseInt(digitsT, 10))) ||
-            (cDig && (cDig === digitsT || parseInt(cDig, 10) === parseInt(digitsT, 10))) ||
-            (sDig && (sDig === digitsT || parseInt(sDig, 10) === parseInt(digitsT, 10)))) {
+        if ((tDig && tDig.length >= 3 && (tDig === digitsT || parseInt(tDig, 10) === parseInt(digitsT, 10))) ||
+            (cDig && cDig.length >= 3 && (cDig === digitsT || parseInt(cDig, 10) === parseInt(digitsT, 10))) ||
+            (sDig && sDig.length >= 3 && (sDig === digitsT || parseInt(sDig, 10) === parseInt(digitsT, 10)))) {
           return true;
         }
       }
 
-      if (digitsS && digitsS.length >= 2) {
+      if (digitsS && digitsS.length >= 3) {
         const sDig = sVal.replace(/\D/g, '');
         const tDig = tVal.replace(/\D/g, '');
-        if ((sDig && (sDig === digitsS || parseInt(sDig, 10) === parseInt(digitsS, 10))) ||
-            (tDig && (tDig === digitsS || parseInt(tDig, 10) === parseInt(digitsS, 10)))) {
+        if ((sDig && sDig.length >= 3 && (sDig === digitsS || parseInt(sDig, 10) === parseInt(digitsS, 10))) ||
+            (tDig && tDig.length >= 3 && (tDig === digitsS || parseInt(tDig, 10) === parseInt(digitsS, 10)))) {
           return true;
         }
       }
@@ -1207,8 +1225,9 @@ export const AuditView: React.FC<AuditViewProps> = ({
     if (!roomNewDescricao.trim() && !matchedExistingAsset) return;
 
     // Se o bem já existia no banco/ASPEC ou se foi digitado tombo existente
-    let targetExisting = matchedExistingAsset;
-    if (!targetExisting && (roomNewTombo.trim() || roomNewTomboSesa.trim())) {
+    // Se o usuário marcou "Sem Plaqueta" ou "Fora do ASPEC", é expressamente um BEM NOVO e NUNCA busca bens existentes de outras salas
+    let targetExisting = (roomNewSemPlaqueta || roomNewForaDoAspec) ? null : matchedExistingAsset;
+    if (!targetExisting && !roomNewSemPlaqueta && !roomNewForaDoAspec && (roomNewTombo.trim() || roomNewTomboSesa.trim())) {
       const cleanT = roomNewTombo.trim().toLowerCase();
       const digitsT = cleanT.replace(/\D/g, '');
       const cleanS = roomNewTomboSesa.trim().toLowerCase();
@@ -1220,15 +1239,14 @@ export const AuditView: React.FC<AuditViewProps> = ({
         const sVal = (a.tomboSesa || a.tomboOrigemSesa || '').toLowerCase();
         if (cleanT && (tVal === cleanT || cVal === cleanT)) return true;
         if (cleanS && (sVal === cleanS || tVal === cleanS)) return true;
-        if (digitsT && digitsT.length >= 2) {
+        if (digitsT && digitsT.length >= 3) {
           const tDig = tVal.replace(/\D/g, '');
           const cDig = cVal.replace(/\D/g, '');
-          if ((tDig && (tDig === digitsT || parseInt(tDig, 10) === parseInt(digitsT, 10))) ||
-              (cDig && (cDig === digitsT || parseInt(cDig, 10) === parseInt(digitsT, 10)))) return true;
+          if ((tDig && tDig === digitsT) || (cDig && cDig === digitsT)) return true;
         }
-        if (digitsS && digitsS.length >= 2) {
+        if (digitsS && digitsS.length >= 3) {
           const sDig = sVal.replace(/\D/g, '');
-          if (sDig && (sDig === digitsS || parseInt(sDig, 10) === parseInt(digitsS, 10))) return true;
+          if (sDig && sDig === digitsS) return true;
         }
         return false;
       }) || null;
@@ -3834,6 +3852,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
                     onChange={(e) => {
                       const checked = e.target.checked;
                       setRoomNewSemPlaqueta(checked);
+                      setMatchedExistingAsset(null);
                       if (checked) {
                         setRoomNewTombo(`SEM-TOMBO-${activeUnitInfo.sigla.toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`);
                       } else {

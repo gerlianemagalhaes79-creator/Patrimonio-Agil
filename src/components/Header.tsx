@@ -9,10 +9,12 @@ import {
   CheckSquare,
   FileText,
   ShieldAlert,
+  ShieldCheck,
   Scale,
   Map,
   Trash2,
-  ArrowUpRight
+  ArrowUpRight,
+  Download
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -23,6 +25,7 @@ interface HeaderProps {
   lastQueryDurationMs?: number;
   totalAssetsCount?: number;
   isProcessing?: boolean;
+  onDownloadBackup?: () => void;
 }
 
 const TAB_INFO: Record<NavTab, { title: string; subtitle: string; icon: React.ElementType }> = {
@@ -85,6 +88,7 @@ export const Header: React.FC<HeaderProps> = ({
   lastQueryDurationMs = 24,
   totalAssetsCount = 0,
   isProcessing = false,
+  onDownloadBackup,
 }) => {
   const activeInfo = TAB_INFO[activeTab] || TAB_INFO.dashboard;
   const ActiveIcon = activeInfo.icon;
@@ -122,8 +126,20 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Right: Performance Timer (Stopwatch + Latency) & Sync Status Indicator */}
+        {/* Right: Backup button, Performance Timer & Sync Status Indicator */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          {onDownloadBackup && (
+            <button
+              type="button"
+              onClick={onDownloadBackup}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-xs cursor-pointer transition-all active:scale-95"
+              title="Baixar Cópia de Segurança Completa do seu trabalho (Backup em 1 clique)"
+            >
+              <ShieldCheck className="w-4 h-4 text-emerald-200" />
+              <span className="hidden sm:inline">Salvar Backup</span>
+            </button>
+          )}
+
           {/* Visible Performance & Processing Timer */}
           <PerformanceTimer
             lastQueryDurationMs={lastQueryDurationMs}

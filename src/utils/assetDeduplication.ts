@@ -41,6 +41,11 @@ export function getAssetDeduplicationKey(a: Partial<Asset>): string {
     return `serie-${serie}`;
   }
 
+  // Se for bem sem plaqueta, achado físico em campo ou sem tombo explícito, usa seu ID único para NUNCA fundir itens físicos reais diferentes
+  if (a.id && (a.foraDoAspec || a.semPlaqueta || !digitsOnly)) {
+    return `item-unique-${a.id}`;
+  }
+
   // 3. Chave Composta Semântica: quando a mesma planilha foi importada mais de uma vez sem tombo
   // Descrição do bem + Unidade + Setor/Subárea + Valor
   const normDesc = (a.descricao || '').toString().trim().toLowerCase().replace(/\s+/g, ' ');

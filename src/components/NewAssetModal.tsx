@@ -9,6 +9,9 @@ interface NewAssetModalProps {
   sectors: Sector[];
   units: UnitInfo[];
   existingAssetsCount: number;
+  initialUnitId?: string;
+  initialSectorId?: string;
+  initialSubsectorName?: string;
 }
 
 export const NewAssetModal: React.FC<NewAssetModalProps> = ({
@@ -18,6 +21,9 @@ export const NewAssetModal: React.FC<NewAssetModalProps> = ({
   sectors,
   units,
   existingAssetsCount,
+  initialUnitId,
+  initialSectorId,
+  initialSubsectorName,
 }) => {
   const currentYear = new Date().getFullYear();
 
@@ -31,9 +37,9 @@ export const NewAssetModal: React.FC<NewAssetModalProps> = ({
   const [duploTombamento, setDuploTombamento] = useState(false);
   const [foraDoAspec, setForaDoAspec] = useState(false);
   const [descricao, setDescricao] = useState('');
-  const [unidadeId, setUnidadeId] = useState<string>('policlinica');
-  const [setorId, setSetorId] = useState<string>('');
-  const [subsetorNome, setSubsetorNome] = useState<string>('');
+  const [unidadeId, setUnidadeId] = useState<string>(initialUnitId || 'policlinica');
+  const [setorId, setSetorId] = useState<string>(initialSectorId || '');
+  const [subsetorNome, setSubsetorNome] = useState<string>(initialSubsectorName || '');
   const [categoria, setCategoria] = useState<AssetCategory>('Equipamentos Médicos & Odontológicos');
   const [estado, setEstado] = useState<AssetCondition>('Excelente');
   const [valorAquisicao, setValorAquisicao] = useState<string>('1500.00');
@@ -47,14 +53,23 @@ export const NewAssetModal: React.FC<NewAssetModalProps> = ({
   // Sectors for chosen unit
   const availableSectors = sectors.filter(s => s.unidadeId === unidadeId);
 
-  // Auto pick sector when unit changes
+  // Sync initial location when modal opens
+  React.useEffect(() => {
+    if (initialUnitId) setUnidadeId(initialUnitId);
+    if (initialSectorId) setSetorId(initialSectorId);
+    if (initialSubsectorName) setSubsetorNome(initialSubsectorName);
+  }, [initialUnitId, initialSectorId, initialSubsectorName, isOpen]);
+
+  // Auto pick sector when unit changes (only if none selected)
   React.useEffect(() => {
     if (availableSectors.length > 0 && (!setorId || !availableSectors.some(s => s.id === setorId))) {
       const first = availableSectors[0];
       setSetorId(first.id);
-      setSubsetorNome(first.subsetores[0]?.nome || '');
+      if (!initialSubsectorName) {
+        setSubsetorNome(first.subsetores[0]?.nome || '');
+      }
     }
-  }, [unidadeId, availableSectors]);
+  }, [unidadeId, availableSectors, setorId, initialSubsectorName]);
 
   // Handle prefix change on tombo origin change
   const handleOriginChange = (orig: TomboOrigin) => {
@@ -91,53 +106,54 @@ export const NewAssetModal: React.FC<NewAssetModalProps> = ({
     }
 
     const valor = parseFloat(valorAquisicao) || 0;
-    const newAsset: Asset = {
-      id: `ast-${Date.now()}`,
-      tombamento: tombamento.trim(),
-      origemTombo,
-      tomboConsorcio: tomboConsorcio.trim() || undefined,
-      tomboSesa: tomboOrigemSesa.trim() || undefined,
-      tomboOrigemSesa: tomboOrigemSesa.trim() || undefined,
-      tomboUfc: tomboUfc.trim() || undefined,
-      tomboFcpc: tomboFcpc.trim() || undefined,
-      outrosTombos: outrosTombos.trim() || undefined,
-      tomboSecundario: outrosTombos.trim() || undefined,
-      duploTombamento: Boolean(duploTombamento || (tomboOrigemSesa.trim() && tombamento.trim())),
-      foraDoAspec,
-      descricao: descricao.trim(),
-      unidadeId: currentUnit.id,
-      unidadeNome: currentUnit.nome,
-      area: currentUnit.nome,
-      subarea: currentSector.nome,
-      setorId: currentSector.id,
-      setorNome: currentSector.nome,
-      subsetorNome: subsetorNome || currentSector.subsetores[0]?.nome || currentSector.nome,
-      responsavelNome: currentSector.responsavelNome,
-      responsavelCargo: currentSector.responsavelCargo,
-      responsavelMatricula: currentSector.responsavelMatricula,
-      categoria,
-      estado,
-      valorAquisicao: valor,
-      valorResidual: valor,
-      dataAquisicao,
-      notaFiscal: notaFiscal.trim(),
-      fornecedor: fornecedor.trim() || 'Fornecedor Credenciado',
-      numeroSerie: numeroSerie.trim(),
-      termoCessaoVinculado: termoCessaoVinculado.trim(),
-      observacoes: observacoes.trim(),
-      codigoASPEC: `ASP-CPSMS-${Math.floor(1000 + Math.random() * 9000)}`,
-      codigoSGPS: `SGPS-${tombamento.trim()}`,
-      auditoria: {
-        conferido: true,
-        dataConferencia: new Date().toISOString().slice(0, 10),
-        responsavelConferencia: 'Gestora de Patrimônio',
-        statusDivergencia: 'conforme',
-        unidadeEncontrada: currentUnit.nome,
-        setorEncontrado: currentSector.nome,
-        subsetorEncontrado: currentSector.nome,
-        observacaoAuditoria: 'Tombamento registrado na implantação da Gerência de Patrimônio do CPSMS.'
-      }
-    };
+      const chosenSubsector = subsetorNome || currentSector.subsetores[0]?.nome || currentSector.nome;
+      const newAsset: Asset = {
+        id: `ast-${Date.now()}`,
+        tombamento: tombamento.trim(),
+        origemTombo,
+        tomboConsorcio: tomboConsorcio.trim() || undefined,
+        tomboSesa: tomboOrigemSesa.trim() || undefined,
+        tomboOrigemSesa: tomboOrigemSesa.trim() || undefined,
+        tomboUfc: tomboUfc.trim() || undefined,
+        tomboFcpc: tomboFcpc.trim() || undefined,
+        outrosTombos: outrosTombos.trim() || undefined,
+        tomboSecundario: outrosTombos.trim() || undefined,
+        duploTombamento: Boolean(duploTombamento || (tomboOrigemSesa.trim() && tombamento.trim())),
+        foraDoAspec,
+        descricao: descricao.trim(),
+        unidadeId: currentUnit.id,
+        unidadeNome: currentUnit.nome,
+        area: currentUnit.nome,
+        subarea: chosenSubsector,
+        setorId: currentSector.id,
+        setorNome: currentSector.nome,
+        subsetorNome: chosenSubsector,
+        responsavelNome: currentSector.responsavelNome,
+        responsavelCargo: currentSector.responsavelCargo,
+        responsavelMatricula: currentSector.responsavelMatricula,
+        categoria,
+        estado,
+        valorAquisicao: valor,
+        valorResidual: valor,
+        dataAquisicao,
+        notaFiscal: notaFiscal.trim(),
+        fornecedor: fornecedor.trim() || 'Fornecedor Credenciado',
+        numeroSerie: numeroSerie.trim(),
+        termoCessaoVinculado: termoCessaoVinculado.trim(),
+        observacoes: observacoes.trim(),
+        codigoASPEC: `ASP-CPSMS-${Math.floor(1000 + Math.random() * 9000)}`,
+        codigoSGPS: `SGPS-${tombamento.trim()}`,
+        auditoria: {
+          conferido: true,
+          dataConferencia: new Date().toISOString().slice(0, 10),
+          responsavelConferencia: 'Gestora de Patrimônio',
+          statusDivergencia: 'conforme',
+          unidadeEncontrada: currentUnit.nome,
+          setorEncontrado: currentSector.nome,
+          subsetorEncontrado: chosenSubsector,
+          observacaoAuditoria: 'Tombamento registrado na implantação da Gerência de Patrimônio do CPSMS.'
+        }
+      };
 
     onSubmit(newAsset);
     onClose();

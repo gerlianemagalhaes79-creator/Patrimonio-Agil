@@ -324,11 +324,27 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
       return;
     }
 
+    // Se o tombo informado é gerado (sem-tombo, fora-aspec, s/n), NUNCA busca correspondência em outras salas!
+    if (
+      cleanT.startsWith('sem-tombo') ||
+      cleanT.startsWith('fora-aspec') ||
+      cleanT.startsWith('tombo-') ||
+      cleanT === 's/n' ||
+      cleanT === 'sn' ||
+      cleanT === '-'
+    ) {
+      setMatchedUntrackedExistingAsset(null);
+      return;
+    }
+
     const digitsT = cleanT.replace(/\D/g, '');
     const digitsC = cleanC.replace(/\D/g, '');
     const digitsS = cleanS.replace(/\D/g, '');
 
     const match = assets.find(a => {
+      const aTomboClean = a.tombamento.toLowerCase();
+      if (aTomboClean.startsWith('sem-tombo') || aTomboClean.startsWith('fora-aspec')) return false;
+
       const at = a.tombamento.toLowerCase();
       const ac = (a.tomboConsorcio || '').toLowerCase();
       const as = (a.tomboSesa || a.tomboOrigemSesa || '').toLowerCase();
@@ -336,42 +352,42 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
       const af = (a.tomboFcpc || '').toLowerCase();
       const ao = (a.outrosTombos || a.tomboSecundario || '').toLowerCase();
 
-      // Direct string matches
-      const matchT = cleanT && (at === cleanT || ac === cleanT || as === cleanT || au === cleanT || af === cleanT || ao === cleanT);
-      const matchC = cleanC && (ac === cleanC || at === cleanC);
-      const matchS = cleanS && (as === cleanS || at === cleanS);
-      const matchU = cleanU && (au === cleanU || at === cleanU);
-      const matchF = cleanF && (af === cleanF || at === cleanF);
-      const matchO = cleanO && (ao === cleanO || at === cleanO);
+      // Direct string matches (mínimo 2 caracteres)
+      const matchT = cleanT && cleanT.length >= 2 && (at === cleanT || ac === cleanT || as === cleanT || au === cleanT || af === cleanT || ao === cleanT);
+      const matchC = cleanC && cleanC.length >= 2 && (ac === cleanC || at === cleanC);
+      const matchS = cleanS && cleanS.length >= 2 && (as === cleanS || at === cleanS);
+      const matchU = cleanU && cleanU.length >= 2 && (au === cleanU || at === cleanU);
+      const matchF = cleanF && cleanF.length >= 2 && (af === cleanF || at === cleanF);
+      const matchO = cleanO && cleanO.length >= 2 && (ao === cleanO || at === cleanO);
 
       if (matchT || matchC || matchS || matchU || matchF || matchO) return true;
 
-      // Numeric digit matching without leading zeros
-      if (digitsT && digitsT.length >= 2) {
+      // Numeric digit matching: EXIGE NO MÍNIMO 3 DÍGITOS
+      if (digitsT && digitsT.length >= 3) {
         const tDig = at.replace(/\D/g, '');
         const cDig = ac.replace(/\D/g, '');
         const sDig = as.replace(/\D/g, '');
-        if ((tDig && (tDig === digitsT || parseInt(tDig, 10) === parseInt(digitsT, 10))) ||
-            (cDig && (cDig === digitsT || parseInt(cDig, 10) === parseInt(digitsT, 10))) ||
-            (sDig && (sDig === digitsT || parseInt(sDig, 10) === parseInt(digitsT, 10)))) {
+        if ((tDig && tDig.length >= 3 && (tDig === digitsT || parseInt(tDig, 10) === parseInt(digitsT, 10))) ||
+            (cDig && cDig.length >= 3 && (cDig === digitsT || parseInt(cDig, 10) === parseInt(digitsT, 10))) ||
+            (sDig && sDig.length >= 3 && (sDig === digitsT || parseInt(sDig, 10) === parseInt(digitsT, 10)))) {
           return true;
         }
       }
 
-      if (digitsC && digitsC.length >= 2) {
+      if (digitsC && digitsC.length >= 3) {
         const cDig = ac.replace(/\D/g, '');
         const tDig = at.replace(/\D/g, '');
-        if ((cDig && (cDig === digitsC || parseInt(cDig, 10) === parseInt(digitsC, 10))) ||
-            (tDig && (tDig === digitsC || parseInt(tDig, 10) === parseInt(digitsC, 10)))) {
+        if ((cDig && cDig.length >= 3 && (cDig === digitsC || parseInt(cDig, 10) === parseInt(digitsC, 10))) ||
+            (tDig && tDig.length >= 3 && (tDig === digitsC || parseInt(tDig, 10) === parseInt(digitsC, 10)))) {
           return true;
         }
       }
 
-      if (digitsS && digitsS.length >= 2) {
+      if (digitsS && digitsS.length >= 3) {
         const sDig = as.replace(/\D/g, '');
         const tDig = at.replace(/\D/g, '');
-        if ((sDig && (sDig === digitsS || parseInt(sDig, 10) === parseInt(digitsS, 10))) ||
-            (tDig && (tDig === digitsS || parseInt(tDig, 10) === parseInt(digitsS, 10)))) {
+        if ((sDig && sDig.length >= 3 && (sDig === digitsS || parseInt(sDig, 10) === parseInt(digitsS, 10))) ||
+            (tDig && tDig.length >= 3 && (tDig === digitsS || parseInt(tDig, 10) === parseInt(digitsS, 10)))) {
           return true;
         }
       }
@@ -538,8 +554,8 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
       descricao: newDescricaoInput.trim(),
       unidadeId: unitInfo.id,
       unidadeNome: unitInfo.nome,
-      area: targetSectorForAdd || 'Setor Não Informado',
-      subarea: targetSubsetorForAdd || targetSectorForAdd || 'Ambiente',
+      area: unitInfo.nome,
+      subarea: targetSectorForAdd || 'Ambiente',
       setorId: `sector-${(targetSectorForAdd || 'geral').toLowerCase().replace(/\s+/g, '-')}`,
       setorNome: targetSectorForAdd || 'Setor Geral',
       subsetorNome: targetSubsetorForAdd || targetSectorForAdd || 'Sala / Ambiente',
@@ -563,6 +579,7 @@ export const MacroMicroInventoryReportModal: React.FC<MacroMicroInventoryReportM
         statusDivergencia: 'conforme',
         unidadeEncontrada: unitInfo.nome,
         setorEncontrado: targetSectorForAdd,
+        subsetorEncontrado: targetSectorForAdd,
         observacaoAuditoria: 'Cadastrado diretamente na conferência da sala.'
       }
     };

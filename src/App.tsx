@@ -79,6 +79,7 @@ import { DataExchangeModal } from './components/DataExchangeModal';
 import { SmartImportModal } from './components/SmartImportModal';
 import { UnitsInteractiveMap } from './components/UnitsInteractiveMap';
 import { doesAssetMatchRoom, normalizeLoc } from './utils/locationHelper';
+import { saveEmergencyLocalBackup, loadEmergencyLocalBackup, FullBackupPayload } from './utils/backupHelper';
 
 // Identificadores dos 27 bens de demonstração inicial para expurgo definitivo
 const DEMO_ASSET_IDS = new Set([
@@ -350,12 +351,28 @@ export default function App() {
           console.warn('Erro ao ler lixeira no startup:', e);
         }
 
-        if (isExplicitlyCleared || cleanLoadedAssets.length === 0) {
+        if (isExplicitlyCleared) {
           effectiveAssets = [];
+        } else if (cleanLoadedAssets.length === 0) {
+          // Verifica se há backup de emergência no navegador
+          const emergency = loadEmergencyLocalBackup();
+          if (emergency && Array.isArray(emergency.assets) && emergency.assets.length > 0) {
+            const valid = emergency.assets.filter(a => !DEMO_ASSET_IDS.has(a.id) && !currentTrashIds.has(a.id));
+            if (valid.length > 0) {
+              effectiveAssets = valid;
+              saveAssetsToDB(valid).catch(console.warn);
+              localStorage.setItem('patrimonio_cpsms_has_user_data', 'true');
+            } else {
+              effectiveAssets = [];
+            }
+          } else {
+            effectiveAssets = [];
+          }
         } else {
           // Mantém os bens legítimos importados pelo usuário
           effectiveAssets = cleanLoadedAssets.filter(a => !currentTrashIds.has(a.id));
           localStorage.setItem('patrimonio_cpsms_has_user_data', 'true');
+          saveEmergencyLocalBackup(effectiveAssets);
         }
         localStorage.setItem(CLEAN_RESET_KEY, 'done');
         localAssets = effectiveAssets;
@@ -675,6 +692,7 @@ export default function App() {
     setAssets(prev => {
       const updated = [newAsset, ...prev];
       saveAssetsToDB(updated).catch(e => console.warn('IndexedDB asset err:', e));
+      saveEmergencyLocalBackup(updated);
       return updated;
     });
     saveAssetToFirestore(newAsset).catch(e => console.warn('Firestore asset err:', e));
@@ -687,9 +705,30 @@ export default function App() {
     setAssets(prev => {
       const updated = prev.map(a => a.id === updatedAsset.id ? updatedAsset : a);
       saveAssetsToDB(updated).catch(e => console.warn('IndexedDB asset err:', e));
+      saveEmergencyLocalBackup(updated);
       return updated;
     });
     saveAssetToFirestore(updatedAsset).catch(e => console.warn('Firestore asset err:', e));
+  };
+
+  const handleRestoreBackup = async (payload: FullBackupPayload) => {
+    if (!payload.assets || !Array.isArray(payload.assets)) return;
+    setIsProcessing(true);
+    const validAssets = payload.assets.filter(a => !DEMO_ASSET_IDS.has(a.id));
+    setAssets(validAssets);
+    await saveAssetsToDB(validAssets);
+    saveEmergencyLocalBackup(validAssets);
+    localStorage.removeItem('patrimonio_cpsms_explicitly_cleared');
+    localStorage.setItem('patrimonio_cpsms_has_user_data', 'true');
+    if (payload.transfers && Array.isArray(payload.transfers)) {
+      setTransfers(payload.transfers);
+      await saveTransfersToDB(payload.transfers);
+    }
+    if (payload.terms && Array.isArray(payload.terms)) {
+      setTerms(payload.terms);
+      await saveTermsToDB(payload.terms);
+    }
+    setIsProcessing(false);
   };
 
   // ==========================================
@@ -1131,6 +1170,7 @@ export default function App() {
         return a;
       });
       saveAssetsToDB(updated).catch(e => console.warn('IndexedDB audit err:', e));
+      saveEmergencyLocalBackup(updated);
       return updated;
     });
   };
@@ -1654,6 +1694,7 @@ export default function App() {
           lastQueryDurationMs={lastQueryDurationMs}
           totalAssetsCount={assets.length}
           isProcessing={isProcessing}
+          onDownloadBackup={() => setIsDataExchangeModalOpen(true)}
         />
 
         {/* Main Viewport */}
@@ -1871,6 +1912,9 @@ export default function App() {
           sectors={sectors}
           units={units}
           existingAssetsCount={assets.length}
+          initialUnitId={auditTarget?.unitId || (selectedUnitFilter !== 'all' ? selectedUnitFilter : undefined)}
+          initialSectorId={auditTarget?.roomName ? sectors.find(s => s.nome === auditTarget.roomName)?.id : undefined}
+          initialSubsectorName={auditTarget?.roomName}
         />
       )}
 
@@ -1879,11 +1923,16 @@ export default function App() {
           isOpen={isDataExchangeModalOpen}
           onClose={() => setIsDataExchangeModalOpen(false)}
           assets={assets}
+          sectors={sectors}
+          transfers={transfers}
+          terms={terms}
+          exits={exits}
           onClearAllData={handleClearAllData}
           onOpenSmartImport={() => {
             setIsDataExchangeModalOpen(false);
             setIsSmartImportModalOpen(true);
           }}
+          onRestoreBackup={handleRestoreBackup}
         />
       )}
 
